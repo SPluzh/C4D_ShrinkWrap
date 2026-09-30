@@ -116,10 +116,12 @@ static void CollectScenePolygons(const BaseObject* op,
 	if (op->GetDeformCache())
 	{
 		CollectCachePolygons(op->GetDeformCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
+		return;
 	}
 	else if (op->GetCache())
 	{
 		CollectCachePolygons(op->GetCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
+		return;
 	}
 	else if ((depth == 0 || !op->GetBit(BIT_CONTROLOBJECT)) && op->IsInstanceOf(Opolygon))
 	{
@@ -316,6 +318,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	{
 		BaseContainer& data = static_cast<BaseObject*>(node)->GetDataInstanceRef();
 		data.SetInt32(SHRINKWRAP_MODE, SHRINKWRAP_MODE_NEAREST_SURFACE);
+		data.SetBool(SHRINKWRAP_USE_SUBDIV, true);
 		data.SetFloat(SHRINKWRAP_OFFSET, 0.0);
 		data.SetFloat(SHRINKWRAP_STRENGTH, 1.0);
 		data.SetFloat(SHRINKWRAP_FALLOFF_RADIUS, 0.0);
@@ -433,7 +436,8 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 	const BaseObject* targetObj = data.GetObjectLink(SHRINKWRAP_TARGET_LINK, doc);
 	if (targetObj)
 	{
-		const BaseObject* resolvedTarget = ResolveGeneratorTarget(targetObj);
+		Bool useSubdiv = data.GetBool(SHRINKWRAP_USE_SUBDIV, true);
+		const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj) : targetObj;
 		UInt64 hierDirty = 0;
 		Int32 objCount = 0;
 		Int32 polyCount = 0;
@@ -613,23 +617,27 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		check = check->GetUp();
 	}
 
-	const BaseObject* resolvedTarget = ResolveGeneratorTarget(targetObj);
+	Bool useSubdiv = data.GetBool(SHRINKWRAP_USE_SUBDIV, true);
+	const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj) : targetObj;
 	if (!resolvedTarget || resolvedTarget == op || resolvedTarget == mod)
 		return true;
 
-	check = resolvedTarget;
-	while (check)
+	if (resolvedTarget != targetObj)
 	{
-		if (check == op || check == mod)
-			return true;
-		check = check->GetUp();
-	}
-	check = op;
-	while (check)
-	{
-		if (check == resolvedTarget)
-			return true;
-		check = check->GetUp();
+		check = resolvedTarget;
+		while (check)
+		{
+			if (check == op || check == mod)
+				return true;
+			check = check->GetUp();
+		}
+		check = op;
+		while (check)
+		{
+			if (check == resolvedTarget)
+				return true;
+			check = check->GetUp();
+		}
 	}
 
 	Float strength = data.GetFloat(SHRINKWRAP_STRENGTH);

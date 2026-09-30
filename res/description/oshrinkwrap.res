@@ -18,6 +18,8 @@ CONTAINER Oshrinkwrap
 			}
 		}
 
+		BOOL SHRINKWRAP_USE_SUBDIV { }
+
 		LONG SHRINKWRAP_MODE
 		{
 			CYCLE
