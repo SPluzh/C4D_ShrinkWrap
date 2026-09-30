@@ -15,18 +15,46 @@
 using namespace cinema;
 using namespace maxon;
 
+static void HashMatrix(const Matrix& m, UInt64& hash)
+{
+	const Float* f = (const Float*)&m;
+	for (Int32 i = 0; i < 12; ++i)
+	{
+		UInt64 bits = *(const UInt64*)&f[i];
+		hash ^= (bits + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2));
+	}
+}
+
 static void RecurseCacheDirty(const BaseObject* cache, UInt64& dirtySum, Int32& objCount, Int32& polyCount, Int32& pointCount, Int32 depth)
 {
 	for (const BaseObject* c = cache; c && depth <= 32; c = c->GetNext())
 	{
 		objCount++;
 		dirtySum ^= (c->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+		HashMatrix(c->GetMl(), dirtySum);
+
 		if (c->IsInstanceOf(Opolygon))
 		{
 			const PolygonObject* p = static_cast<const PolygonObject*>(c);
+			Int32 pc = p->GetPointCount();
 			polyCount += p->GetPolygonCount();
-			pointCount += p->GetPointCount();
+			pointCount += pc;
+			if (pc > 0)
+			{
+				const Vector* pts = p->GetPointR();
+				if (pts)
+				{
+					const Float* f0 = (const Float*)&pts[0];
+					const Float* f1 = (const Float*)&pts[pc - 1];
+					for (Int32 i = 0; i < 3; ++i)
+					{
+						dirtySum ^= (*(const UInt64*)&f0[i] + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+						dirtySum ^= (*(const UInt64*)&f1[i] + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+					}
+				}
+			}
 		}
+
 		if (c->GetDeformCache())
 			RecurseCacheDirty(c->GetDeformCache(), dirtySum, objCount, polyCount, pointCount, depth + 1);
 		else if (c->GetCache())
@@ -44,12 +72,28 @@ static void RecurseSceneDirty(const BaseObject* op, UInt64& dirtySum, Int32& obj
 
 	objCount++;
 	dirtySum ^= (op->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+	HashMatrix(op->GetMg(), dirtySum);
 
 	if (op->IsInstanceOf(Opolygon))
 	{
 		const PolygonObject* p = static_cast<const PolygonObject*>(op);
+		Int32 pc = p->GetPointCount();
 		polyCount += p->GetPolygonCount();
-		pointCount += p->GetPointCount();
+		pointCount += pc;
+		if (pc > 0)
+		{
+			const Vector* pts = p->GetPointR();
+			if (pts)
+			{
+				const Float* f0 = (const Float*)&pts[0];
+				const Float* f1 = (const Float*)&pts[pc - 1];
+				for (Int32 i = 0; i < 3; ++i)
+				{
+					dirtySum ^= (*(const UInt64*)&f0[i] + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+					dirtySum ^= (*(const UInt64*)&f1[i] + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+				}
+			}
+		}
 	}
 
 	if (op->GetDeformCache())
@@ -144,7 +188,8 @@ static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj)
 	if (!targetObj)
 		return nullptr;
 
-	const BaseObject* resolved = targetObj;
+	const BaseObject* highestGenerator = nullptr;
+
 	for (const BaseObject* parent = targetObj->GetUp(); parent; parent = parent->GetUp())
 	{
 		// Stop if parent generator is disabled with green tick or editor mode OFF
@@ -154,14 +199,20 @@ static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj)
 		// Check if parent is a Subdivision Surface or another caching generator (Boole, Connect, Symmetry, etc.)
 		if (parent->IsInstanceOf(Osds) || parent->GetCache() || parent->GetDeformCache())
 		{
-			resolved = parent;
+			highestGenerator = parent;
+		}
+		else if (parent->IsInstanceOf(Onull))
+		{
+			// Climb through Nulls to see if there is an SDS/generator above the Null
+			continue;
 		}
 		else
 		{
 			break;
 		}
 	}
-	return resolved;
+
+	return highestGenerator ? highestGenerator : targetObj;
 }
 
 static void EnsureDeformedEditing(BaseDocument* doc)
@@ -358,16 +409,28 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 	}
 	else if (type == MSG_DESCRIPTION_CHECKUPDATE)
 	{
+		_cachedHierarchyDirty = 0;
 		if (doc)
 		{
 			EnsureDeformedEditing(doc);
 		}
 		SyncMeshDisplay(op);
+		BaseObject* parent = op->GetUp();
+		if (parent)
+		{
+			parent->SetDirty(DIRTYFLAGS::DATA);
+		}
 		EventAdd();
 	}
 	else if (type == MSG_DESCRIPTION_POSTSETPARAMETER)
 	{
+		_cachedHierarchyDirty = 0;
 		SyncMeshDisplay(op);
+		BaseObject* parent = op->GetUp();
+		if (parent)
+		{
+			parent->SetDirty(DIRTYFLAGS::DATA);
+		}
 		EventAdd();
 	}
 	else if (type == MSG_DOCUMENTINFO)
@@ -453,6 +516,11 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 			_checkDirtyHash = hierDirty;
 			_checkDirtyTargetRoot = resolvedTarget;
 			op->SetDirty(DIRTYFLAGS::DATA);
+			BaseObject* parent = op->GetUp();
+			if (parent)
+			{
+				parent->SetDirty(DIRTYFLAGS::DATA);
+			}
 		}
 	}
 	else if (_checkDirtyTargetRoot != nullptr)
@@ -460,6 +528,11 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 		_checkDirtyHash = 0;
 		_checkDirtyTargetRoot = nullptr;
 		op->SetDirty(DIRTYFLAGS::DATA);
+		BaseObject* parent = op->GetUp();
+		if (parent)
+		{
+			parent->SetDirty(DIRTYFLAGS::DATA);
+		}
 	}
 }
 
@@ -663,26 +736,35 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	if (targetPolys.GetCount() == 0)
 		return true;
 
-	Int32 objCount = (Int32)targetPolys.GetCount();
-	Int32 totalPolys = 0;
-	Int32 totalPoints = 0;
 	UInt64 hierDirty = 0;
-	for (Int32 k = 0; k < objCount; ++k)
-	{
-		const PolygonObject* p = targetPolys[k];
-		hierDirty ^= (p->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
-		totalPolys += p->GetPolygonCount();
-		totalPoints += p->GetPointCount();
-	}
-	hierDirty ^= (resolvedTarget->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+	Int32 hierObjCount = 0;
+	Int32 hierPolyCount = 0;
+	Int32 hierPointCount = 0;
+	RecurseSceneDirty(resolvedTarget, hierDirty, hierObjCount, hierPolyCount, hierPointCount);
 	if (targetObj != resolvedTarget)
 	{
-		hierDirty ^= (targetObj->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		RecurseSceneDirty(targetObj, hierDirty, hierObjCount, hierPolyCount, hierPointCount);
+	}
+	for (Int32 k = 0; k < (Int32)targetMatrices.GetCount(); ++k)
+	{
+		HashMatrix(targetMatrices[k], hierDirty);
+	}
+
+	Int32 totalPolys = 0;
+	Int32 totalPoints = 0;
+	for (Int32 k = 0; k < (Int32)targetPolys.GetCount(); ++k)
+	{
+		const PolygonObject* p = targetPolys[k];
+		if (p)
+		{
+			totalPolys += p->GetPolygonCount();
+			totalPoints += p->GetPointCount();
+		}
 	}
 
 	// BVH Caching with dirty check
 	if (!_bvh.IsBuilt() || hierDirty != _cachedHierarchyDirty || resolvedTarget != _cachedTargetRoot ||
-		objCount != _cachedObjectCount || totalPolys != _cachedTotalPolyCount ||
+		(Int32)targetPolys.GetCount() != _cachedObjectCount || totalPolys != _cachedTotalPolyCount ||
 		totalPoints != _cachedTotalPointCount)
 	{
 		auto t0 = std::chrono::high_resolution_clock::now();
@@ -692,11 +774,11 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		auto t1 = std::chrono::high_resolution_clock::now();
 		double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 		ApplicationOutput("ShrinkWrap: BVH built for @ objects, @ polygons (@ triangles) in @ ms."_s,
-						  objCount, totalPolys, _bvh.GetTriangleCount(), ms);
+						  (Int32)targetPolys.GetCount(), totalPolys, _bvh.GetTriangleCount(), ms);
 
 		_cachedHierarchyDirty = hierDirty;
 		_cachedTargetRoot = resolvedTarget;
-		_cachedObjectCount = objCount;
+		_cachedObjectCount = (Int32)targetPolys.GetCount();
 		_cachedTotalPolyCount = totalPolys;
 		_cachedTotalPointCount = totalPoints;
 	}
