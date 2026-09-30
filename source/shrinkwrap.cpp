@@ -442,6 +442,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	data.SetBool(SHRINKWRAP_ABOVE_SURFACE, false);
 	data.SetBool(SHRINKWRAP_AUTO_BAKE, true);
 	data.SetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
+	data.SetBool(SHRINKWRAP_IGNORE_CAMERA, false);
 
 	// QuadDraw Retopo Display styling defaults
 	data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
@@ -873,6 +874,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	Bool bidirectional = data.GetBool(SHRINKWRAP_BIDIRECTIONAL);
 	Bool aboveSurface = data.GetBool(SHRINKWRAP_ABOVE_SURFACE);
 	Bool snapToVertsEdges = data.GetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
+	Bool ignoreCamera = data.GetBool(SHRINKWRAP_IGNORE_CAMERA, false);
 
 	Matrix targetMg = resolvedTarget->GetMg();
 	Matrix invTargetMg = ~targetMg;
@@ -1124,35 +1126,63 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 		auto querySurfacePoint = [&](Vector& outHitTargetLocal, Vector& outNormTargetLocal) -> Bool
 		{
-			if (!snapToVertsEdges && hasCamera)
+			if (!snapToVertsEdges)
 			{
-				Vector rayDirWorld = isPerspective ? (pWorld - camPos) : camForward;
-				if (rayDirWorld.GetSquaredLength() > 1e-12)
-					rayDirWorld.Normalize();
-				else
-					rayDirWorld = camForward;
-
-				Vector rayDirTargetLocal = invTargetMg.sqmat * rayDirWorld;
-
 				Vector closestHit, closestNorm;
 				Float maxRayDist = (falloffRadius > 0.0) ? falloffRadius : MAXRANGE;
 
 				if (_bvh.FindClosestPoint(pTargetLocal, closestHit, closestNorm, maxRayDist))
 				{
-					Float closestDist = (pTargetLocal - closestHit).GetLength();
-					Float allowedRayDist = maxon::Min(closestDist * 3.0 + 10.0, maxRayDist);
-
-					Vector rayHit, rayNorm;
-					if (_bvh.Raycast(pTargetLocal, rayDirTargetLocal, rayHit, rayNorm, allowedRayDist, true))
+					if (!ignoreCamera && hasCamera)
 					{
-						outHitTargetLocal = rayHit;
+						Vector rayDirWorld = isPerspective ? (pWorld - camPos) : camForward;
+						if (rayDirWorld.GetSquaredLength() > 1e-12)
+							rayDirWorld.Normalize();
+						else
+							rayDirWorld = camForward;
+
+						Vector rayDirTargetLocal = invTargetMg.sqmat * rayDirWorld;
+						Float closestDist = (pTargetLocal - closestHit).GetLength();
+						Float allowedRayDist = maxon::Min(closestDist * 3.0 + 10.0, maxRayDist);
+
+						Vector rayHit, rayNorm;
+						if (_bvh.Raycast(pTargetLocal, rayDirTargetLocal, rayHit, rayNorm, allowedRayDist, true))
+						{
+							outHitTargetLocal = rayHit;
+							outNormTargetLocal = closestNorm;
+							return true;
+						}
+
+						outHitTargetLocal = closestHit;
 						outNormTargetLocal = closestNorm;
 						return true;
 					}
+					else
+					{
+						// Target Normal projection (camera-independent)
+						Vector normTargetLocal = closestNorm;
+						if (normTargetLocal.GetSquaredLength() > 1e-12)
+							normTargetLocal.Normalize();
+						else
+							normTargetLocal = Vector(0.0, 1.0, 0.0);
 
-					outHitTargetLocal = closestHit;
-					outNormTargetLocal = closestNorm;
-					return true;
+						Float closestDist = (pTargetLocal - closestHit).GetLength();
+						Float allowedRayDist = maxon::Min(closestDist * 3.0 + 10.0, maxRayDist);
+
+						Vector rayHit, rayNorm;
+						if (_bvh.Raycast(pTargetLocal, -normTargetLocal, rayHit, rayNorm, allowedRayDist, true))
+						{
+							outHitTargetLocal = rayHit;
+							outNormTargetLocal = rayNorm;
+							return true;
+						}
+
+						// Fallback: project directly onto tangent plane of the closest polygon
+						Float distToPlane = Dot(pTargetLocal - closestHit, normTargetLocal);
+						outHitTargetLocal = pTargetLocal - normTargetLocal * distToPlane;
+						outNormTargetLocal = normTargetLocal;
+						return true;
+					}
 				}
 				return false;
 			}

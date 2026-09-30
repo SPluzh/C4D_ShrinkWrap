@@ -8,7 +8,7 @@ echo [SOURCE] %SOURCE%
 echo [DEST]   %DEST%
 echo.
 
-powershell -Command "$ErrorActionPreference = 'Stop'; try { if (-not (Test-Path '%DEST%')) { New-Item -ItemType Directory -Path '%DEST%' -Force }; Get-ChildItem '%DEST%\*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue; if (Test-Path '%DEST%\C4D_ShrinkWrap.xdl64') { try { Remove-Item '%DEST%\C4D_ShrinkWrap.xdl64' -Force } catch { Move-Item '%DEST%\C4D_ShrinkWrap.xdl64' '%DEST%\C4D_ShrinkWrap.xdl64.old' -Force } }; Copy-Item '%SOURCE%\C4D_ShrinkWrap.xdl64' '%DEST%\' -Force; Copy-Item 'C:\Users\user\Desktop\cpp\C4D_ShrinkWrap\res' '%DEST%\' -Recurse -Force } catch { Write-Error $_; exit 1 }"
+powershell -Command "$ErrorActionPreference = 'Stop'; try { if (-not (Test-Path '%DEST%')) { New-Item -ItemType Directory -Path '%DEST%' -Force }; Get-ChildItem '%DEST%\*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue; if (Test-Path '%DEST%\C4D_ShrinkWrap.xdl64') { try { Remove-Item '%DEST%\C4D_ShrinkWrap.xdl64' -Force } catch { $u = [System.IO.Path]::GetRandomFileName(); Move-Item '%DEST%\C4D_ShrinkWrap.xdl64' ('%DEST%\' + $u + '.old') -Force } }; Copy-Item '%SOURCE%\C4D_ShrinkWrap.xdl64' '%DEST%\' -Force; Copy-Item 'C:\Users\user\Desktop\cpp\C4D_ShrinkWrap\res' '%DEST%\' -Recurse -Force } catch { Write-Error $_; exit 1 }"
 
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Copy failed! Exit Code: %ERRORLEVEL%
