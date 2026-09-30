@@ -121,7 +121,7 @@ static void CollectScenePolygons(const BaseObject* op,
 	{
 		CollectCachePolygons(op->GetCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
 	}
-	else if (!op->GetBit(BIT_CONTROLOBJECT) && op->IsInstanceOf(Opolygon))
+	else if ((depth == 0 || !op->GetBit(BIT_CONTROLOBJECT)) && op->IsInstanceOf(Opolygon))
 	{
 		const PolygonObject* poly = static_cast<const PolygonObject*>(op);
 		if (poly->GetPolygonCount() > 0 && poly->GetPointCount() > 0)
@@ -135,6 +135,31 @@ static void CollectScenePolygons(const BaseObject* op,
 	{
 		CollectScenePolygons(child, excludeOp, outPolys, outMatrices, depth + 1);
 	}
+}
+
+static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj)
+{
+	if (!targetObj)
+		return nullptr;
+
+	const BaseObject* resolved = targetObj;
+	for (const BaseObject* parent = targetObj->GetUp(); parent; parent = parent->GetUp())
+	{
+		// Stop if parent generator is disabled with green tick or editor mode OFF
+		if (!parent->GetDeformMode() || parent->GetEditorMode() == MODE_OFF)
+			break;
+
+		// Check if parent is a Subdivision Surface or another caching generator (Boole, Connect, Symmetry, etc.)
+		if (parent->IsInstanceOf(Osds) || parent->GetCache() || parent->GetDeformCache())
+		{
+			resolved = parent;
+		}
+		else
+		{
+			break;
+		}
+	}
+	return resolved;
 }
 
 static void EnsureDeformedEditing(BaseDocument* doc)
@@ -408,16 +433,21 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 	const BaseObject* targetObj = data.GetObjectLink(SHRINKWRAP_TARGET_LINK, doc);
 	if (targetObj)
 	{
+		const BaseObject* resolvedTarget = ResolveGeneratorTarget(targetObj);
 		UInt64 hierDirty = 0;
 		Int32 objCount = 0;
 		Int32 polyCount = 0;
 		Int32 pointCount = 0;
-		RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
+		RecurseSceneDirty(resolvedTarget, hierDirty, objCount, polyCount, pointCount);
+		if (targetObj != resolvedTarget)
+		{
+			RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
+		}
 
-		if (hierDirty != _checkDirtyHash || targetObj != _checkDirtyTargetRoot)
+		if (hierDirty != _checkDirtyHash || resolvedTarget != _checkDirtyTargetRoot)
 		{
 			_checkDirtyHash = hierDirty;
-			_checkDirtyTargetRoot = targetObj;
+			_checkDirtyTargetRoot = resolvedTarget;
 			op->SetDirty(DIRTYFLAGS::DATA);
 		}
 	}
@@ -583,6 +613,25 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		check = check->GetUp();
 	}
 
+	const BaseObject* resolvedTarget = ResolveGeneratorTarget(targetObj);
+	if (!resolvedTarget || resolvedTarget == op || resolvedTarget == mod)
+		return true;
+
+	check = resolvedTarget;
+	while (check)
+	{
+		if (check == op || check == mod)
+			return true;
+		check = check->GetUp();
+	}
+	check = op;
+	while (check)
+	{
+		if (check == resolvedTarget)
+			return true;
+		check = check->GetUp();
+	}
+
 	Float strength = data.GetFloat(SHRINKWRAP_STRENGTH);
 	if (strength <= 0.0)
 		return true;
@@ -595,7 +644,13 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 	maxon::BaseArray<const PolygonObject*> targetPolys;
 	maxon::BaseArray<Matrix> targetMatrices;
-	CollectScenePolygons(targetObj, op, targetPolys, targetMatrices);
+	CollectScenePolygons(resolvedTarget, op, targetPolys, targetMatrices);
+
+	if (targetPolys.GetCount() == 0 && resolvedTarget != targetObj)
+	{
+		resolvedTarget = targetObj;
+		CollectScenePolygons(resolvedTarget, op, targetPolys, targetMatrices);
+	}
 
 	if (targetPolys.GetCount() == 0)
 		return true;
@@ -611,15 +666,19 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		totalPolys += p->GetPolygonCount();
 		totalPoints += p->GetPointCount();
 	}
-	hierDirty ^= (targetObj->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+	hierDirty ^= (resolvedTarget->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+	if (targetObj != resolvedTarget)
+	{
+		hierDirty ^= (targetObj->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+	}
 
 	// BVH Caching with dirty check
-	if (!_bvh.IsBuilt() || hierDirty != _cachedHierarchyDirty || targetObj != _cachedTargetRoot ||
+	if (!_bvh.IsBuilt() || hierDirty != _cachedHierarchyDirty || resolvedTarget != _cachedTargetRoot ||
 		objCount != _cachedObjectCount || totalPolys != _cachedTotalPolyCount ||
 		totalPoints != _cachedTotalPointCount)
 	{
 		auto t0 = std::chrono::high_resolution_clock::now();
-		Matrix invTargetMg = ~targetObj->GetMg();
+		Matrix invTargetMg = ~resolvedTarget->GetMg();
 		if (!_bvh.Build(targetPolys, targetMatrices, invTargetMg, thread))
 			return true;
 		auto t1 = std::chrono::high_resolution_clock::now();
@@ -628,7 +687,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 						  objCount, totalPolys, _bvh.GetTriangleCount(), ms);
 
 		_cachedHierarchyDirty = hierDirty;
-		_cachedTargetRoot = targetObj;
+		_cachedTargetRoot = resolvedTarget;
 		_cachedObjectCount = objCount;
 		_cachedTotalPolyCount = totalPolys;
 		_cachedTotalPointCount = totalPoints;
@@ -643,7 +702,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	Bool bidirectional = data.GetBool(SHRINKWRAP_BIDIRECTIONAL);
 	Bool aboveSurface = data.GetBool(SHRINKWRAP_ABOVE_SURFACE);
 
-	Matrix targetMg = targetObj->GetMg();
+	Matrix targetMg = resolvedTarget->GetMg();
 	Matrix invTargetMg = ~targetMg;
 	Matrix invOpMg = ~op_mg;
 
