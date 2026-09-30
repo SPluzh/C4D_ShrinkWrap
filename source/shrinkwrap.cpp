@@ -15,6 +15,22 @@
 using namespace cinema;
 using namespace maxon;
 
+static const BaseList2D* ResolveLink(const BaseContainer& data, Int32 id, const BaseDocument* doc)
+{
+	const BaseList2D* node = data.GetLink(id, doc, 0);
+	if (!node)
+	{
+		const BaseLink* bl = data.GetBaseLink(id);
+		if (bl)
+		{
+			node = bl->GetLink(doc, 0);
+			if (!node)
+				node = bl->ForceGetLink();
+		}
+	}
+	return node;
+}
+
 static void HashMatrix(const Matrix& m, UInt64& hash)
 {
 	const Float* f = (const Float*)&m;
@@ -565,15 +581,15 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 			RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
 		}
 
-		const BaseList2D* selLink = data.GetObjectLink(SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+		const BaseList2D* selLink = ResolveLink(data, SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
 		if (selLink)
 		{
-			hierDirty ^= (selLink->GetDirty(DIRTYFLAGS::DATA) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+			hierDirty ^= (selLink->GetDirty(DIRTYFLAGS::ALL) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		}
-		const BaseList2D* vmapLink = data.GetObjectLink(SHRINKWRAP_VERTEXMAP_LINK, doc);
+		const BaseList2D* vmapLink = ResolveLink(data, SHRINKWRAP_VERTEXMAP_LINK, doc);
 		if (vmapLink)
 		{
-			hierDirty ^= (vmapLink->GetDirty(DIRTYFLAGS::DATA) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+			hierDirty ^= (vmapLink->GetDirty(DIRTYFLAGS::ALL) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		}
 
 		if (hierDirty != _checkDirtyHash || resolvedTarget != _checkDirtyTargetRoot)
@@ -885,7 +901,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	}
 
 	// Vertex Map handling
-	const BaseList2D* vmapLink = data.GetObjectLink(SHRINKWRAP_VERTEXMAP_LINK, doc);
+	const BaseList2D* vmapLink = ResolveLink(data, SHRINKWRAP_VERTEXMAP_LINK, doc);
 	const Float32* vmapWeights = nullptr;
 	if (vmapLink && vmapLink->IsInstanceOf(Tvertexmap))
 	{
@@ -937,94 +953,137 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	}
 
 	// Exclude Selection Tag handling
-	const BaseList2D* selLink = data.GetObjectLink(SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+	const BaseList2D* selLink = ResolveLink(data, SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
 	maxon::BaseArray<Char> excludedPoints;
 	Bool hasExcludedPoints = false;
 
 	if (selLink)
 	{
-		const SelectionTag* selTag = static_cast<const SelectionTag*>(selLink);
-		const BaseSelect* bs = selTag ? selTag->GetBaseSelect() : nullptr;
-		if (bs && bs->GetCount() > 0)
+		if (selLink->IsInstanceOf(Tvertexmap))
 		{
-			if (excludedPoints.Resize(pcnt) != maxon::FAILED)
+			const VertexMapTag* vtag = static_cast<const VertexMapTag*>(selLink);
+			const Float32* weights = vtag ? vtag->GetDataAddressR() : nullptr;
+			if (weights && excludedPoints.Resize(pcnt) != maxon::FAILED)
+			{
+				for (Int32 i = 0; i < pcnt; ++i)
+				{
+					if (weights[i] > 0.0f)
+					{
+						excludedPoints[i] = 1;
+						hasExcludedPoints = true;
+					}
+					else
+					{
+						excludedPoints[i] = 0;
+					}
+				}
+			}
+		}
+		else
+		{
+			const SelectionTag* selTag = static_cast<const SelectionTag*>(selLink);
+			const BaseSelect* bs = selTag ? selTag->GetBaseSelect() : nullptr;
+			if (bs && bs->GetCount() > 0 && excludedPoints.Resize(pcnt) != maxon::FAILED)
 			{
 				for (Int32 i = 0; i < pcnt; ++i)
 					excludedPoints[i] = 0;
 
-				if (selLink->IsInstanceOf(5674 /* Tpointselection */))
+				if (selLink->IsInstanceOf(Tpointselection))
 				{
-					for (Int32 i = 0; i < pcnt; ++i)
+					Int32 seg = 0, a, b;
+					while (bs->GetRange(seg++, maxon::LIMIT<Int32>::MAX, &a, &b))
 					{
-						if (bs->IsSelected(i))
+						for (Int32 i = a; i <= b; ++i)
 						{
-							excludedPoints[i] = 1;
-							hasExcludedPoints = true;
-						}
-					}
-				}
-				else if (selLink->IsInstanceOf(5673 /* Tpolygonselection */) && op->IsInstanceOf(Opolygon))
-				{
-					const PolygonObject* polyOp = static_cast<const PolygonObject*>(op);
-					Int32 polyCount = polyOp->GetPolygonCount();
-					const CPolygon* polys = polyOp->GetPolygonR();
-					if (polys)
-					{
-						for (Int32 pIdx = 0; pIdx < polyCount; ++pIdx)
-						{
-							if (bs->IsSelected(pIdx))
+							if (i >= 0 && i < pcnt)
 							{
-								const CPolygon& poly = polys[pIdx];
-								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
-								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
-								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
-								if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+								excludedPoints[i] = 1;
 								hasExcludedPoints = true;
 							}
 						}
 					}
 				}
-				else if (selLink->IsInstanceOf(5701 /* Tedgeselection */) && op->IsInstanceOf(Opolygon))
+				else if (selLink->IsInstanceOf(Tpolygonselection) || selLink->IsInstanceOf(Tedgeselection))
 				{
-					const PolygonObject* polyOp = static_cast<const PolygonObject*>(op);
-					Int32 polyCount = polyOp->GetPolygonCount();
-					const CPolygon* polys = polyOp->GetPolygonR();
-					if (polys)
+					const PolygonObject* polyOp = op->IsInstanceOf(Opolygon) ? static_cast<const PolygonObject*>(op) : nullptr;
+					if (!polyOp && mod)
 					{
-						for (Int32 pIdx = 0; pIdx < polyCount; ++pIdx)
+						const BaseObject* parent = mod->GetUp();
+						if (parent && parent->IsInstanceOf(Opolygon))
+							polyOp = static_cast<const PolygonObject*>(parent);
+					}
+
+					if (polyOp)
+					{
+						Int32 polyCount = polyOp->GetPolygonCount();
+						const CPolygon* polys = polyOp->GetPolygonR();
+						if (polys)
 						{
-							const CPolygon& poly = polys[pIdx];
-							Int32 baseEdge = pIdx * 4;
-							if (bs->IsSelected(baseEdge + 0))
+							if (selLink->IsInstanceOf(Tpolygonselection))
 							{
-								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
-								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
-								hasExcludedPoints = true;
-							}
-							if (bs->IsSelected(baseEdge + 1))
-							{
-								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
-								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
-								hasExcludedPoints = true;
-							}
-							if (bs->IsSelected(baseEdge + 2))
-							{
-								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
-								if (poly.c == poly.d)
+								Int32 seg = 0, a, b;
+								while (bs->GetRange(seg++, maxon::LIMIT<Int32>::MAX, &a, &b))
 								{
-									if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+									for (Int32 pIdx = a; pIdx <= b; ++pIdx)
+									{
+										if (pIdx >= 0 && pIdx < polyCount)
+										{
+											const CPolygon& poly = polys[pIdx];
+											if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+											if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+											if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+											if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+											hasExcludedPoints = true;
+										}
+									}
 								}
-								else
-								{
-									if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
-								}
-								hasExcludedPoints = true;
 							}
-							if (poly.c != poly.d && bs->IsSelected(baseEdge + 3))
+							else if (selLink->IsInstanceOf(Tedgeselection))
 							{
-								if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
-								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
-								hasExcludedPoints = true;
+								Int32 seg = 0, a, b;
+								while (bs->GetRange(seg++, maxon::LIMIT<Int32>::MAX, &a, &b))
+								{
+									for (Int32 edgeCode = a; edgeCode <= b; ++edgeCode)
+									{
+										Int32 pIdx = edgeCode / 4;
+										Int32 eIdx = edgeCode % 4;
+										if (pIdx >= 0 && pIdx < polyCount)
+										{
+											const CPolygon& poly = polys[pIdx];
+											if (eIdx == 0)
+											{
+												if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+												if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+												hasExcludedPoints = true;
+											}
+											else if (eIdx == 1)
+											{
+												if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+												if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+												hasExcludedPoints = true;
+											}
+											else if (eIdx == 2)
+											{
+												if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+												if (poly.c == poly.d)
+												{
+													if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+												}
+												else
+												{
+													if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+												}
+												hasExcludedPoints = true;
+											}
+											else if (eIdx == 3 && poly.c != poly.d)
+											{
+												if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+												if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+												hasExcludedPoints = true;
+											}
+										}
+									}
+								}
 							}
 						}
 					}

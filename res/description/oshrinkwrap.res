@@ -61,6 +61,7 @@ CONTAINER Oshrinkwrap
 				5674;
 				5673;
 				5701;
+				5682;
 			}
 		}
 
