@@ -240,26 +240,53 @@ static void EnsureDeformedEditing(BaseDocument* doc)
 
 ShrinkWrapDeformer::~ShrinkWrapDeformer()
 {
-	if (_meshDisplayApplied && _lastParent)
-	{
-		ObjectColorProperties origProp;
-		origProp.color = _origParentColor;
-		origProp.usecolor = _origParentUseColor;
-		origProp.xray = _origParentXray;
-		const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
-		const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
-		_meshDisplayApplied = false;
-		_lastParent = nullptr;
-	}
 }
 
 void ShrinkWrapDeformer::Free(GeListNode* node)
 {
-	if (node)
+	if (node && _meshDisplayApplied && _lastParentLink && GeIsMainThreadAndNoDrawThread())
 	{
-		SyncMeshDisplay(static_cast<BaseObject*>(node), true);
+		BaseObject* op = static_cast<BaseObject*>(node);
+		BaseDocument* doc = op ? op->GetDocument() : nullptr;
+		if (doc)
+		{
+			BaseObject* lastParent = (BaseObject*)_lastParentLink->GetLink(doc, Opolygon);
+			if (lastParent)
+			{
+				ObjectColorProperties origProp;
+				origProp.color = _origParentColor;
+				origProp.usecolor = _origParentUseColor;
+				origProp.xray = _origParentXray;
+				lastParent->SetColorProperties(&origProp);
+				lastParent->Message(MSG_UPDATE);
+			}
+		}
 	}
+	_meshDisplayApplied = false;
+	if (_lastParentLink)
+		_lastParentLink->SetLink(nullptr);
+
 	NodeData::Free(node);
+}
+
+Bool ShrinkWrapDeformer::CopyTo(NodeData* dest, const GeListNode* snode, GeListNode* dnode, COPYFLAGS flags, AliasTrans* trn) const
+{
+	ShrinkWrapDeformer* dst = static_cast<ShrinkWrapDeformer*>(dest);
+	if (dst)
+	{
+		dst->_bvh.Clear();
+		dst->_checkDirtyHash = 0;
+		dst->_checkDirtyTargetRoot = nullptr;
+		dst->_cachedHierarchyDirty = 0;
+		dst->_cachedTargetRoot = nullptr;
+		dst->_cachedObjectCount = 0;
+		dst->_cachedTotalPolyCount = 0;
+		dst->_cachedTotalPointCount = 0;
+		dst->_meshDisplayApplied = false;
+		if (dst->_lastParentLink)
+			dst->_lastParentLink->SetLink(nullptr);
+	}
+	return NodeData::CopyTo(dest, snode, dnode, flags, trn);
 }
 
 void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore) const
@@ -267,41 +294,46 @@ void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore
 	if (!deformer)
 		return;
 
+	// Critical: Never modify scene objects outside the main UI thread or during viewport drawing
+	if (!GeIsMainThreadAndNoDrawThread())
+		return;
+
+	BaseDocument* doc = deformer->GetDocument();
+	if (!doc)
+		return;
+
 	BaseObject* currentParent = deformer->GetUp();
+	BaseObject* lastParent = (doc && _lastParentLink) ? (BaseObject*)_lastParentLink->GetLink(doc, Opolygon) : nullptr;
 
 	// If parent changed and we had previously applied styling to old parent, restore old parent
-	if (_lastParent && _lastParent != currentParent && _meshDisplayApplied)
+	if (lastParent && lastParent != currentParent && _meshDisplayApplied)
 	{
-		BaseDocument* doc = deformer->GetDocument();
-		if (doc && _lastParent->GetDocument() == doc)
+		ObjectColorProperties origProp;
+		origProp.color = _origParentColor;
+		origProp.usecolor = _origParentUseColor;
+		origProp.xray = _origParentXray;
+		lastParent->SetColorProperties(&origProp);
+		lastParent->Message(MSG_UPDATE);
+
+		_meshDisplayApplied = false;
+		if (_lastParentLink)
+			_lastParentLink->SetLink(nullptr);
+	}
+
+	if (forceRestore || !currentParent || !currentParent->IsInstanceOf(Opolygon))
+	{
+		if (_meshDisplayApplied && lastParent)
 		{
 			ObjectColorProperties origProp;
 			origProp.color = _origParentColor;
 			origProp.usecolor = _origParentUseColor;
 			origProp.xray = _origParentXray;
-			const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
-			const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
-		}
-		_meshDisplayApplied = false;
-		_lastParent = nullptr;
-	}
+			lastParent->SetColorProperties(&origProp);
+			lastParent->Message(MSG_UPDATE);
 
-	if (forceRestore || !currentParent || !currentParent->IsInstanceOf(Opolygon))
-	{
-		if (_meshDisplayApplied && _lastParent)
-		{
-			BaseDocument* doc = deformer->GetDocument();
-			if (doc && _lastParent->GetDocument() == doc)
-			{
-				ObjectColorProperties origProp;
-				origProp.color = _origParentColor;
-				origProp.usecolor = _origParentUseColor;
-				origProp.xray = _origParentXray;
-				const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
-				const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
-			}
 			_meshDisplayApplied = false;
-			_lastParent = nullptr;
+			if (_lastParentLink)
+				_lastParentLink->SetLink(nullptr);
 		}
 		return;
 	}
@@ -313,15 +345,17 @@ void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore
 	if (!isDeformerOn || !customColor)
 	{
 		// Deformer is inactive or custom color disabled: restore parent's original appearance
-		if (_meshDisplayApplied && _lastParent)
+		if (_meshDisplayApplied && lastParent)
 		{
 			ObjectColorProperties origProp;
 			origProp.color = _origParentColor;
 			origProp.usecolor = _origParentUseColor;
 			origProp.xray = _origParentXray;
-			const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
-			const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
+			lastParent->SetColorProperties(&origProp);
+			lastParent->Message(MSG_UPDATE);
 			_meshDisplayApplied = false;
+			if (_lastParentLink)
+				_lastParentLink->SetLink(nullptr);
 		}
 		return;
 	}
@@ -333,7 +367,7 @@ void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore
 	if (faceOpacity < 0.0) faceOpacity = 0.0;
 	Bool useXray = (faceOpacity < 0.99);
 
-	if (!_meshDisplayApplied || _lastParent != currentParent)
+	if (!_meshDisplayApplied || lastParent != currentParent)
 	{
 		// First time applying to this parent: capture original properties
 		ObjectColorProperties curProp;
@@ -341,7 +375,8 @@ void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore
 		_origParentColor = curProp.color;
 		_origParentUseColor = curProp.usecolor;
 		_origParentXray = curProp.xray;
-		_lastParent = currentParent;
+		if (_lastParentLink)
+			_lastParentLink->SetLink(currentParent);
 		_meshDisplayApplied = true;
 	}
 
@@ -365,26 +400,39 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	if (!node)
 		return false;
 
-	if (!isCloneInit)
+	if (isCloneInit)
 	{
-		BaseContainer& data = static_cast<BaseObject*>(node)->GetDataInstanceRef();
-		data.SetInt32(SHRINKWRAP_MODE, SHRINKWRAP_MODE_NEAREST_SURFACE);
-		data.SetBool(SHRINKWRAP_USE_SUBDIV, true);
-		data.SetFloat(SHRINKWRAP_OFFSET, 0.0);
-		data.SetFloat(SHRINKWRAP_STRENGTH, 1.0);
-		data.SetFloat(SHRINKWRAP_FALLOFF_RADIUS, 0.0);
-		data.SetBool(SHRINKWRAP_BIDIRECTIONAL, true);
-		data.SetBool(SHRINKWRAP_ABOVE_SURFACE, false);
-		data.SetBool(SHRINKWRAP_AUTO_BAKE, true);
-
-		// QuadDraw Retopo Display styling defaults
-		data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
-		data.SetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0)); // QuadDraw Cyan (0, 150, 255)
-		data.SetFloat(SHRINKWRAP_FACE_OPACITY, 0.35); // 35% opacity (QuadDraw style)
-		data.SetBool(SHRINKWRAP_DRAW_WIREFRAME, true);
-		data.SetVector(SHRINKWRAP_WIRE_COLOR, Vector(0.0, 0.0, 0.0)); // Crisp black wireframe
-		data.SetFloat(SHRINKWRAP_WIRE_WIDTH, 1.5);
+		_meshDisplayApplied = false;
+		if (_lastParentLink)
+			_lastParentLink->SetLink(nullptr);
+		_checkDirtyHash = 0;
+		_checkDirtyTargetRoot = nullptr;
+		_cachedHierarchyDirty = 0;
+		_cachedTargetRoot = nullptr;
+		_cachedObjectCount = 0;
+		_cachedTotalPolyCount = 0;
+		_cachedTotalPointCount = 0;
+		_bvh.Clear();
+		return true;
 	}
+
+	BaseContainer& data = static_cast<BaseObject*>(node)->GetDataInstanceRef();
+	data.SetInt32(SHRINKWRAP_MODE, SHRINKWRAP_MODE_NEAREST_SURFACE);
+	data.SetBool(SHRINKWRAP_USE_SUBDIV, true);
+	data.SetFloat(SHRINKWRAP_OFFSET, 0.0);
+	data.SetFloat(SHRINKWRAP_STRENGTH, 1.0);
+	data.SetFloat(SHRINKWRAP_FALLOFF_RADIUS, 0.0);
+	data.SetBool(SHRINKWRAP_BIDIRECTIONAL, true);
+	data.SetBool(SHRINKWRAP_ABOVE_SURFACE, false);
+	data.SetBool(SHRINKWRAP_AUTO_BAKE, true);
+
+	// QuadDraw Retopo Display styling defaults
+	data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
+	data.SetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0)); // QuadDraw Cyan (0, 150, 255)
+	data.SetFloat(SHRINKWRAP_FACE_OPACITY, 0.35); // 35% opacity (QuadDraw style)
+	data.SetBool(SHRINKWRAP_DRAW_WIREFRAME, true);
+	data.SetVector(SHRINKWRAP_WIRE_COLOR, Vector(0.0, 0.0, 0.0)); // Crisp black wireframe
+	data.SetFloat(SHRINKWRAP_WIRE_WIDTH, 1.5);
 
 	return true;
 }
@@ -432,6 +480,13 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 			parent->SetDirty(DIRTYFLAGS::DATA);
 		}
 		EventAdd();
+	}
+	else if (type == MSG_CHANGE)
+	{
+		if (doc && GeIsMainThreadAndNoDrawThread())
+		{
+			SyncMeshDisplay(op);
+		}
 	}
 	else if (type == MSG_DOCUMENTINFO)
 	{
@@ -492,8 +547,6 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 {
 	if (!op || !doc)
 		return;
-
-	SyncMeshDisplay(op);
 
 	const BaseContainer& data = op->GetDataInstanceRef();
 	const BaseObject* targetObj = data.GetObjectLink(SHRINKWRAP_TARGET_LINK, doc);

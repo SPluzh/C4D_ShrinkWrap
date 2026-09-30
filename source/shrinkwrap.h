@@ -13,18 +13,19 @@ class ShrinkWrapDeformer : public cinema::ObjectData
 public:
 	virtual ~ShrinkWrapDeformer();
 	virtual void Free(cinema::GeListNode* node) override;
-	virtual maxon::Bool Init(cinema::GeListNode* node, maxon::Bool isCloneInit);
-	virtual maxon::Bool Message(cinema::GeListNode* node, maxon::Int32 type, void* data);
-	virtual void CheckDirty(cinema::BaseObject* op, const cinema::BaseDocument* doc);
-	virtual cinema::DRAWRESULT Draw(cinema::BaseObject* op, cinema::DRAWPASS drawpass, cinema::BaseDraw* bd, cinema::BaseDrawHelp* bh);
+	virtual maxon::Bool Init(cinema::GeListNode* node, maxon::Bool isCloneInit) override;
+	virtual maxon::Bool CopyTo(cinema::NodeData* dest, const cinema::GeListNode* snode, cinema::GeListNode* dnode, cinema::COPYFLAGS flags, cinema::AliasTrans* trn) const override;
+	virtual maxon::Bool Message(cinema::GeListNode* node, maxon::Int32 type, void* data) override;
+	virtual void CheckDirty(cinema::BaseObject* op, const cinema::BaseDocument* doc) override;
+	virtual cinema::DRAWRESULT Draw(cinema::BaseObject* op, cinema::DRAWPASS drawpass, cinema::BaseDraw* bd, cinema::BaseDrawHelp* bh) override;
 	virtual maxon::Bool ModifyObject(const cinema::BaseObject* mod, const cinema::BaseDocument* doc,
 									 cinema::BaseObject* op, const cinema::Matrix& op_mg,
 									 const cinema::Matrix& mod_mg, maxon::Float lod,
-									 maxon::Int32 flags, cinema::BaseThread* thread) const;
-	virtual void GetDimension(const cinema::BaseObject* op, cinema::Vector* mp, cinema::Vector* rad) const;
+									 maxon::Int32 flags, cinema::BaseThread* thread) const override;
+	virtual void GetDimension(const cinema::BaseObject* op, cinema::Vector* mp, cinema::Vector* rad) const override;
 	virtual maxon::Result<maxon::Bool> GetAccessedObjects(const cinema::BaseList2D* node,
 														  cinema::METHOD_ID method,
-														  cinema::AccessedObjectsCallback& access) const;
+														  cinema::AccessedObjectsCallback& access) const override;
 
 	static cinema::NodeData* Alloc() { return NewObjClear(ShrinkWrapDeformer); }
 
@@ -45,7 +46,7 @@ private:
 
 	// Parent mesh display restoration tracking
 	mutable maxon::Bool _meshDisplayApplied = false;
-	mutable const cinema::BaseObject* _lastParent = nullptr;
+	mutable cinema::AutoAlloc<cinema::BaseLink> _lastParentLink;
 	mutable cinema::Vector _origParentColor = cinema::Vector(0.0);
 	mutable maxon::Int32 _origParentUseColor = 0;
 	mutable maxon::Bool _origParentXray = false;
