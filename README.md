@@ -4,6 +4,8 @@ A high-performance, multi-threaded ShrinkWrap Deformer plugin for Maxon Cinema 4
 
 Designed for both traditional surface projection and high-speed live retopology workflows (Maya QuadDraw-style).
 
+![](attachments/gif.gif)
+
 ---
 
 ## Features
