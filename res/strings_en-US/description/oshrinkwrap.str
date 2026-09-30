@@ -1,0 +1,29 @@
+STRINGTABLE Oshrinkwrap
+{
+	Oshrinkwrap "ShrinkWrap Deformer";
+
+	SHRINKWRAP_TARGET_LINK "Target Object";
+	SHRINKWRAP_MODE "Mode";
+	SHRINKWRAP_MODE_NEAREST_SURFACE "Nearest Surface Point";
+	SHRINKWRAP_MODE_PROJECT "Project Along Vertex Normal";
+	SHRINKWRAP_MODE_NEAREST_VERTEX "Nearest Vertex";
+	SHRINKWRAP_MODE_TARGET_NORMAL "Target Surface Normal";
+
+	SHRINKWRAP_OFFSET "Offset";
+	SHRINKWRAP_STRENGTH "Strength";
+	SHRINKWRAP_FALLOFF_RADIUS "Distance Limit";
+	SHRINKWRAP_BIDIRECTIONAL "Bidirectional Raycast";
+	SHRINKWRAP_ABOVE_SURFACE "Keep Above Surface";
+	SHRINKWRAP_VERTEXMAP_LINK "Vertex Map Restriction";
+	SHRINKWRAP_AUTO_BAKE "Auto-Bake to Base Mesh (Live Snap)";
+	SHRINKWRAP_ENABLE_DEFORMED_EDITING "Enable Deformed Editing";
+	SHRINKWRAP_APPLY_TO_MESH "Bake / Apply to Mesh";
+
+	SHRINKWRAP_GROUP_DISPLAY "Display Settings (QuadDraw Style)";
+	SHRINKWRAP_ENABLE_CUSTOM_COLOR "Enable QuadDraw Retopo Color";
+	SHRINKWRAP_MESH_COLOR "Mesh Color";
+	SHRINKWRAP_MESH_XRAY "X-Ray / Semi-Transparent";
+	SHRINKWRAP_DRAW_WIREFRAME "Draw Wireframe Overlay";
+	SHRINKWRAP_WIRE_COLOR "Wireframe Color";
+	SHRINKWRAP_WIRE_WIDTH "Wire Width";
+}

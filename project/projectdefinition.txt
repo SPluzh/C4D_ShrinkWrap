@@ -1,0 +1,20 @@
+// The platforms this project is targeting - can be [Win64;OSX;Linux].
+Platform=Win64
+
+// Type of project - can be [Lib;DLL;App], DLL is for (plugin) modules, lib for static libraries,
+// effectively frameworks, and App for standalone applications (not possible for plugins).
+Type=DLL
+
+// The frameworks dependencies of this module. One can only include header files from frameworks
+// which are listed here. The selection here is a good starting point for most projects.
+APIS=\
+cinema.framework;\
+core.framework
+
+// Enable Cinema API features for this module, and then reenable style checks again (because 
+// C4D=true disables them).
+C4D=true
+stylecheck.level=0 
+
+// Unique module ID
+ModuleId=net.maxonexample.c4dshrinkwrap
