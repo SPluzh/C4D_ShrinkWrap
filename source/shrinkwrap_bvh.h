@@ -237,85 +237,117 @@ public:
 		return true;
 	}
 
-	// High-performance BVH build
-	Bool Build(const PolygonObject* polyObj, BaseThread* thread = nullptr)
+	// High-performance BVH build from multiple polygon objects with matrices transformed into target root's local space
+	Bool Build(const maxon::BaseArray<const PolygonObject*>& polyObjs,
+			   const maxon::BaseArray<Matrix>& matrices,
+			   const Matrix& invTargetMg,
+			   BaseThread* thread = nullptr)
 	{
 		Clear();
-		if (!polyObj)
+		if (polyObjs.GetCount() == 0 || polyObjs.GetCount() != matrices.GetCount())
 			return false;
 
-		const Vector* points = polyObj->GetPointR();
-		const CPolygon* polys = polyObj->GetPolygonR();
-		Int32 polyCount = polyObj->GetPolygonCount();
-		Int32 pointCount = polyObj->GetPointCount();
-
-		if (!points || !polys || polyCount <= 0 || pointCount <= 0)
-			return false;
-
-		Int32 estTris = 0;
-		for (Int32 i = 0; i < polyCount; ++i)
+		Int32 totalEstTris = 0;
+		for (Int32 k = 0; k < (Int32)polyObjs.GetCount(); ++k)
 		{
-			estTris += (polys[i].c == polys[i].d) ? 1 : 2;
+			const PolygonObject* polyObj = polyObjs[k];
+			if (!polyObj)
+				continue;
+			Int32 polyCount = polyObj->GetPolygonCount();
+			const CPolygon* polys = polyObj->GetPolygonR();
+			if (!polys || polyCount <= 0)
+				continue;
+
+			for (Int32 i = 0; i < polyCount; ++i)
+			{
+				totalEstTris += (polys[i].c == polys[i].d) ? 1 : 2;
+			}
 		}
 
+		if (totalEstTris <= 0)
+			return false;
+
 		maxon::BaseArray<BVHTriangle> srcTriangles;
-		if (srcTriangles.Resize(estTris) == maxon::FAILED)
+		if (srcTriangles.Resize(totalEstTris) == maxon::FAILED)
 			return false;
 
 		maxon::BaseArray<BVHBuildPrim> buildPrims;
-		if (buildPrims.Resize(estTris) == maxon::FAILED)
+		if (buildPrims.Resize(totalEstTris) == maxon::FAILED)
 			return false;
 
 		Int32 triIdx = 0;
 		BVHAABB rootBbox;
 		BVHAABB rootCentroidBbox;
 
-		for (Int32 i = 0; i < polyCount; ++i)
+		for (Int32 k = 0; k < (Int32)polyObjs.GetCount(); ++k)
 		{
-			const CPolygon& p = polys[i];
-			if (p.a < 0 || p.a >= pointCount || p.b < 0 || p.b >= pointCount ||
-				p.c < 0 || p.c >= pointCount || p.d < 0 || p.d >= pointCount)
+			const PolygonObject* polyObj = polyObjs[k];
+			if (!polyObj)
 				continue;
 
-			// First triangle (a, b, c)
+			const Vector* points = polyObj->GetPointR();
+			const CPolygon* polys = polyObj->GetPolygonR();
+			Int32 polyCount = polyObj->GetPolygonCount();
+			Int32 pointCount = polyObj->GetPointCount();
+
+			if (!points || !polys || polyCount <= 0 || pointCount <= 0)
+				continue;
+
+			Matrix toTargetLocal = invTargetMg * matrices[k];
+
+			for (Int32 i = 0; i < polyCount; ++i)
 			{
-				BVHTriangle& tri = srcTriangles[triIdx];
-				tri.v0 = points[p.a];
-				tri.v1 = points[p.b];
-				tri.v2 = points[p.c];
+				const CPolygon& p = polys[i];
+				if (p.a < 0 || p.a >= pointCount || p.b < 0 || p.b >= pointCount ||
+					p.c < 0 || p.c >= pointCount || p.d < 0 || p.d >= pointCount)
+					continue;
 
-				BVHBuildPrim& prim = buildPrims[triIdx];
-				prim.triIndex = triIdx;
-				prim.centroid = (tri.v0 + tri.v1 + tri.v2) * (1.0 / 3.0);
-				prim.aabb.minBound = prim.aabb.maxBound = tri.v0;
-				prim.aabb.Expand(tri.v1);
-				prim.aabb.Expand(tri.v2);
+				Vector v0 = toTargetLocal * points[p.a];
+				Vector v1 = toTargetLocal * points[p.b];
+				Vector v2 = toTargetLocal * points[p.c];
 
-				rootBbox.Expand(prim.aabb);
-				rootCentroidBbox.Expand(prim.centroid);
+				// First triangle (a, b, c)
+				{
+					BVHTriangle& tri = srcTriangles[triIdx];
+					tri.v0 = v0;
+					tri.v1 = v1;
+					tri.v2 = v2;
 
-				triIdx++;
-			}
+					BVHBuildPrim& prim = buildPrims[triIdx];
+					prim.triIndex = triIdx;
+					prim.centroid = (tri.v0 + tri.v1 + tri.v2) * (1.0 / 3.0);
+					prim.aabb.minBound = prim.aabb.maxBound = tri.v0;
+					prim.aabb.Expand(tri.v1);
+					prim.aabb.Expand(tri.v2);
 
-			// Second triangle if quad (a, c, d)
-			if (p.c != p.d)
-			{
-				BVHTriangle& tri = srcTriangles[triIdx];
-				tri.v0 = points[p.a];
-				tri.v1 = points[p.c];
-				tri.v2 = points[p.d];
+					rootBbox.Expand(prim.aabb);
+					rootCentroidBbox.Expand(prim.centroid);
 
-				BVHBuildPrim& prim = buildPrims[triIdx];
-				prim.triIndex = triIdx;
-				prim.centroid = (tri.v0 + tri.v1 + tri.v2) * (1.0 / 3.0);
-				prim.aabb.minBound = prim.aabb.maxBound = tri.v0;
-				prim.aabb.Expand(tri.v1);
-				prim.aabb.Expand(tri.v2);
+					triIdx++;
+				}
 
-				rootBbox.Expand(prim.aabb);
-				rootCentroidBbox.Expand(prim.centroid);
+				// Second triangle if quad (a, c, d)
+				if (p.c != p.d)
+				{
+					Vector v3 = toTargetLocal * points[p.d];
 
-				triIdx++;
+					BVHTriangle& tri = srcTriangles[triIdx];
+					tri.v0 = v0;
+					tri.v1 = v2;
+					tri.v2 = v3;
+
+					BVHBuildPrim& prim = buildPrims[triIdx];
+					prim.triIndex = triIdx;
+					prim.centroid = (tri.v0 + tri.v1 + tri.v2) * (1.0 / 3.0);
+					prim.aabb.minBound = prim.aabb.maxBound = tri.v0;
+					prim.aabb.Expand(tri.v1);
+					prim.aabb.Expand(tri.v2);
+
+					rootBbox.Expand(prim.aabb);
+					rootCentroidBbox.Expand(prim.centroid);
+
+					triIdx++;
+				}
 			}
 		}
 
@@ -355,6 +387,21 @@ public:
 
 		_isBuilt = true;
 		return true;
+	}
+
+	// Single-object convenience build
+	Bool Build(const PolygonObject* polyObj, BaseThread* thread = nullptr)
+	{
+		Clear();
+		if (!polyObj)
+			return false;
+
+		maxon::BaseArray<const PolygonObject*> polyObjs;
+		maxon::BaseArray<Matrix> matrices;
+		if (polyObjs.Append(polyObj) == maxon::FAILED || matrices.Append(Matrix()) == maxon::FAILED)
+			return false;
+
+		return Build(polyObjs, matrices, Matrix(), thread);
 	}
 
 	// Query: Nearest point on surface

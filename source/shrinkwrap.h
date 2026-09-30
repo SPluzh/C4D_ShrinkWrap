@@ -11,6 +11,8 @@
 class ShrinkWrapDeformer : public cinema::ObjectData
 {
 public:
+	virtual ~ShrinkWrapDeformer();
+	virtual void Free(cinema::GeListNode* node) override;
 	virtual maxon::Bool Init(cinema::GeListNode* node, maxon::Bool isCloneInit);
 	virtual maxon::Bool Message(cinema::GeListNode* node, maxon::Int32 type, void* data);
 	virtual void CheckDirty(cinema::BaseObject* op, const cinema::BaseDocument* doc);
@@ -27,12 +29,26 @@ public:
 	static cinema::NodeData* Alloc() { return NewObjClear(ShrinkWrapDeformer); }
 
 private:
+	void SyncMeshDisplay(cinema::BaseObject* deformer, maxon::Bool forceRestore = false) const;
+
 	mutable cinema::TriangleBVH _bvh;
-	mutable maxon::UInt64 _cachedTargetDirty = 0;
-	mutable maxon::UInt64 _cachedTargetObjDirty = 0;
-	mutable const cinema::BaseObject* _cachedTargetPtr = nullptr;
-	mutable maxon::Int32 _cachedTargetPolyCount = 0;
-	mutable maxon::Int32 _cachedTargetPointCount = 0;
+	// Hierarchy dirty tracking for CheckDirty
+	mutable maxon::UInt64 _checkDirtyHash = 0;
+	mutable const cinema::BaseObject* _checkDirtyTargetRoot = nullptr;
+
+	// Hierarchy cache tracking for ModifyObject (BVH rebuild)
+	mutable maxon::UInt64 _cachedHierarchyDirty = 0;
+	mutable const cinema::BaseObject* _cachedTargetRoot = nullptr;
+	mutable maxon::Int32 _cachedObjectCount = 0;
+	mutable maxon::Int32 _cachedTotalPolyCount = 0;
+	mutable maxon::Int32 _cachedTotalPointCount = 0;
+
+	// Parent mesh display restoration tracking
+	mutable maxon::Bool _meshDisplayApplied = false;
+	mutable const cinema::BaseObject* _lastParent = nullptr;
+	mutable cinema::Vector _origParentColor = cinema::Vector(0.0);
+	mutable maxon::Int32 _origParentUseColor = 0;
+	mutable maxon::Bool _origParentXray = false;
 };
 
 maxon::Bool RegisterShrinkWrap();

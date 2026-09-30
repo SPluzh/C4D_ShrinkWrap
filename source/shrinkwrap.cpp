@@ -15,69 +15,126 @@
 using namespace cinema;
 using namespace maxon;
 
-static const PolygonObject* FindPolygonRecursive(const BaseObject* op)
+static void RecurseCacheDirty(const BaseObject* cache, UInt64& dirtySum, Int32& objCount, Int32& polyCount, Int32& pointCount, Int32 depth)
 {
-	while (op)
+	for (const BaseObject* c = cache; c && depth <= 32; c = c->GetNext())
 	{
-		if (op->IsInstanceOf(Opolygon))
-			return static_cast<const PolygonObject*>(op);
-
-		if (op->GetDeformCache())
+		objCount++;
+		dirtySum ^= (c->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+		if (c->IsInstanceOf(Opolygon))
 		{
-			const PolygonObject* p = FindPolygonRecursive(op->GetDeformCache());
-			if (p)
-				return p;
+			const PolygonObject* p = static_cast<const PolygonObject*>(c);
+			polyCount += p->GetPolygonCount();
+			pointCount += p->GetPointCount();
 		}
+		if (c->GetDeformCache())
+			RecurseCacheDirty(c->GetDeformCache(), dirtySum, objCount, polyCount, pointCount, depth + 1);
+		else if (c->GetCache())
+			RecurseCacheDirty(c->GetCache(), dirtySum, objCount, polyCount, pointCount, depth + 1);
 
-		if (op->GetCache())
-		{
-			const PolygonObject* p = FindPolygonRecursive(op->GetCache());
-			if (p)
-				return p;
-		}
-
-		if (op->GetDown())
-		{
-			const PolygonObject* p = FindPolygonRecursive(op->GetDown());
-			if (p)
-				return p;
-		}
-
-		op = op->GetNext();
+		if (c->GetDown())
+			RecurseCacheDirty(c->GetDown(), dirtySum, objCount, polyCount, pointCount, depth + 1);
 	}
-	return nullptr;
 }
 
-static const PolygonObject* GetTargetPolygonObject(const BaseObject* op)
+static void RecurseSceneDirty(const BaseObject* op, UInt64& dirtySum, Int32& objCount, Int32& polyCount, Int32& pointCount, Int32 depth = 0)
 {
-	if (!op)
-		return nullptr;
+	if (!op || depth > 32)
+		return;
+
+	objCount++;
+	dirtySum ^= (op->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
 
 	if (op->IsInstanceOf(Opolygon))
-		return static_cast<const PolygonObject*>(op);
+	{
+		const PolygonObject* p = static_cast<const PolygonObject*>(op);
+		polyCount += p->GetPolygonCount();
+		pointCount += p->GetPointCount();
+	}
+
+	if (op->GetDeformCache())
+		RecurseCacheDirty(op->GetDeformCache(), dirtySum, objCount, polyCount, pointCount, depth + 1);
+	else if (op->GetCache())
+		RecurseCacheDirty(op->GetCache(), dirtySum, objCount, polyCount, pointCount, depth + 1);
+
+	for (const BaseObject* child = op->GetDown(); child; child = child->GetNext())
+	{
+		RecurseSceneDirty(child, dirtySum, objCount, polyCount, pointCount, depth + 1);
+	}
+}
+
+static void CollectCachePolygons(const BaseObject* cache,
+								 const Matrix& parentMg,
+								 const BaseObject* excludeOp,
+								 maxon::BaseArray<const PolygonObject*>& outPolys,
+								 maxon::BaseArray<Matrix>& outMatrices,
+								 Int32 depth)
+{
+	for (const BaseObject* c = cache; c && depth <= 32; c = c->GetNext())
+	{
+		if (c == excludeOp)
+			continue;
+
+		Matrix currentMg = parentMg * c->GetMl();
+
+		if (c->GetDeformCache())
+		{
+			CollectCachePolygons(c->GetDeformCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
+		}
+		else if (c->GetCache())
+		{
+			CollectCachePolygons(c->GetCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
+		}
+		else if (c->IsInstanceOf(Opolygon))
+		{
+			const PolygonObject* poly = static_cast<const PolygonObject*>(c);
+			if (poly->GetPolygonCount() > 0 && poly->GetPointCount() > 0)
+			{
+				outPolys.Append(poly) iferr_ignore("append poly");
+				outMatrices.Append(currentMg) iferr_ignore("append matrix");
+			}
+		}
+
+		if (c->GetDown())
+		{
+			CollectCachePolygons(c->GetDown(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
+		}
+	}
+}
+
+static void CollectScenePolygons(const BaseObject* op,
+								 const BaseObject* excludeOp,
+								 maxon::BaseArray<const PolygonObject*>& outPolys,
+								 maxon::BaseArray<Matrix>& outMatrices,
+								 Int32 depth = 0)
+{
+	if (!op || op == excludeOp || depth > 32)
+		return;
+
+	Matrix currentMg = op->GetMg();
 
 	if (op->GetDeformCache())
 	{
-		const PolygonObject* p = FindPolygonRecursive(op->GetDeformCache());
-		if (p)
-			return p;
+		CollectCachePolygons(op->GetDeformCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
 	}
-
-	if (op->GetCache())
+	else if (op->GetCache())
 	{
-		const PolygonObject* p = FindPolygonRecursive(op->GetCache());
-		if (p)
-			return p;
+		CollectCachePolygons(op->GetCache(), currentMg, excludeOp, outPolys, outMatrices, depth + 1);
 	}
-
-	if (op->GetDown())
+	else if (!op->GetBit(BIT_CONTROLOBJECT) && op->IsInstanceOf(Opolygon))
 	{
-		const PolygonObject* p = FindPolygonRecursive(op->GetDown());
-		if (p)
-			return p;
+		const PolygonObject* poly = static_cast<const PolygonObject*>(op);
+		if (poly->GetPolygonCount() > 0 && poly->GetPointCount() > 0)
+		{
+			outPolys.Append(poly) iferr_ignore("append poly");
+			outMatrices.Append(currentMg) iferr_ignore("append matrix");
+		}
 	}
 
-	return nullptr;
+	for (const BaseObject* child = op->GetDown(); child; child = child->GetNext())
+	{
+		CollectScenePolygons(child, excludeOp, outPolys, outMatrices, depth + 1);
+	}
 }
 
 static void EnsureDeformedEditing(BaseDocument* doc)
@@ -103,68 +160,125 @@ static void EnsureDeformedEditing(BaseDocument* doc)
 	}
 }
 
-static void ApplyMeshDisplay(BaseObject* deformer)
+ShrinkWrapDeformer::~ShrinkWrapDeformer()
+{
+	if (_meshDisplayApplied && _lastParent)
+	{
+		ObjectColorProperties origProp;
+		origProp.color = _origParentColor;
+		origProp.usecolor = _origParentUseColor;
+		origProp.xray = _origParentXray;
+		const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
+		const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
+		_meshDisplayApplied = false;
+		_lastParent = nullptr;
+	}
+}
+
+void ShrinkWrapDeformer::Free(GeListNode* node)
+{
+	if (node)
+	{
+		SyncMeshDisplay(static_cast<BaseObject*>(node), true);
+	}
+	NodeData::Free(node);
+}
+
+void ShrinkWrapDeformer::SyncMeshDisplay(BaseObject* deformer, Bool forceRestore) const
 {
 	if (!deformer)
 		return;
 
-	BaseObject* parent = deformer->GetUp();
-	if (!parent)
+	BaseObject* currentParent = deformer->GetUp();
+
+	// If parent changed and we had previously applied styling to old parent, restore old parent
+	if (_lastParent && _lastParent != currentParent && _meshDisplayApplied)
+	{
+		BaseDocument* doc = deformer->GetDocument();
+		if (doc && _lastParent->GetDocument() == doc)
+		{
+			ObjectColorProperties origProp;
+			origProp.color = _origParentColor;
+			origProp.usecolor = _origParentUseColor;
+			origProp.xray = _origParentXray;
+			const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
+			const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
+		}
+		_meshDisplayApplied = false;
+		_lastParent = nullptr;
+	}
+
+	if (forceRestore || !currentParent || !currentParent->IsInstanceOf(Opolygon))
+	{
+		if (_meshDisplayApplied && _lastParent)
+		{
+			BaseDocument* doc = deformer->GetDocument();
+			if (doc && _lastParent->GetDocument() == doc)
+			{
+				ObjectColorProperties origProp;
+				origProp.color = _origParentColor;
+				origProp.usecolor = _origParentUseColor;
+				origProp.xray = _origParentXray;
+				const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
+				const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
+			}
+			_meshDisplayApplied = false;
+			_lastParent = nullptr;
+		}
 		return;
+	}
 
 	const BaseContainer& data = deformer->GetDataInstanceRef();
+	Bool isDeformerOn = deformer->GetDeformMode() && (deformer->GetEditorMode() != MODE_OFF);
 	Bool customColor = data.GetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
-	Vector meshColor = data.GetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0));
-	Bool xray = data.GetBool(SHRINKWRAP_MESH_XRAY, true);
-	Bool shouldApply = customColor && deformer->GetDeformMode();
 
-	BaseContainer& parentData = parent->GetDataInstanceRef();
-
-	if (shouldApply)
+	if (!isDeformerOn || !customColor)
 	{
-		Bool changed = false;
-		if (parentData.GetInt32(ID_BASEOBJECT_USECOLOR) != ID_BASEOBJECT_USECOLOR_ALWAYS)
+		// Deformer is inactive or custom color disabled: restore parent's original appearance
+		if (_meshDisplayApplied && _lastParent)
 		{
-			parentData.SetInt32(ID_BASEOBJECT_USECOLOR, ID_BASEOBJECT_USECOLOR_ALWAYS);
-			parent->SetParameter(DescID::Create((Int32)ID_BASEOBJECT_USECOLOR), GeData((Int32)ID_BASEOBJECT_USECOLOR_ALWAYS), DESCFLAGS_SET::NONE);
-			changed = true;
+			ObjectColorProperties origProp;
+			origProp.color = _origParentColor;
+			origProp.usecolor = _origParentUseColor;
+			origProp.xray = _origParentXray;
+			const_cast<BaseObject*>(_lastParent)->SetColorProperties(&origProp);
+			const_cast<BaseObject*>(_lastParent)->Message(MSG_UPDATE);
+			_meshDisplayApplied = false;
 		}
-		if (parentData.GetVector(ID_BASEOBJECT_COLOR) != meshColor)
-		{
-			parentData.SetVector(ID_BASEOBJECT_COLOR, meshColor);
-			parent->SetParameter(DescID::Create((Int32)ID_BASEOBJECT_COLOR), GeData(meshColor), DESCFLAGS_SET::NONE);
-			changed = true;
-		}
-		if (parentData.GetBool(ID_BASEOBJECT_XRAY) != xray)
-		{
-			parentData.SetBool(ID_BASEOBJECT_XRAY, xray);
-			parent->SetParameter(DescID::Create((Int32)ID_BASEOBJECT_XRAY), GeData(xray), DESCFLAGS_SET::NONE);
-			changed = true;
-		}
-		if (changed)
-		{
-			parent->Message(MSG_UPDATE);
-		}
+		return;
 	}
-	else
+
+	// Deformer is active and custom color is enabled
+	Vector meshColor = data.GetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0));
+	Float faceOpacity = data.GetFloat(SHRINKWRAP_FACE_OPACITY, 0.35);
+	if (faceOpacity > 1.0) faceOpacity /= 100.0;
+	if (faceOpacity < 0.0) faceOpacity = 0.0;
+	Bool useXray = (faceOpacity < 0.99);
+
+	if (!_meshDisplayApplied || _lastParent != currentParent)
 	{
-		Bool changed = false;
-		if (parentData.GetInt32(ID_BASEOBJECT_USECOLOR) == ID_BASEOBJECT_USECOLOR_ALWAYS)
-		{
-			parentData.SetInt32(ID_BASEOBJECT_USECOLOR, ID_BASEOBJECT_USECOLOR_OFF);
-			parent->SetParameter(DescID::Create((Int32)ID_BASEOBJECT_USECOLOR), GeData((Int32)ID_BASEOBJECT_USECOLOR_OFF), DESCFLAGS_SET::NONE);
-			changed = true;
-		}
-		if (parentData.GetBool(ID_BASEOBJECT_XRAY))
-		{
-			parentData.SetBool(ID_BASEOBJECT_XRAY, false);
-			parent->SetParameter(DescID::Create((Int32)ID_BASEOBJECT_XRAY), GeData(false), DESCFLAGS_SET::NONE);
-			changed = true;
-		}
-		if (changed)
-		{
-			parent->Message(MSG_UPDATE);
-		}
+		// First time applying to this parent: capture original properties
+		ObjectColorProperties curProp;
+		currentParent->GetColorProperties(&curProp);
+		_origParentColor = curProp.color;
+		_origParentUseColor = curProp.usecolor;
+		_origParentXray = curProp.xray;
+		_lastParent = currentParent;
+		_meshDisplayApplied = true;
+	}
+
+	// Set desired retopo display styling
+	ObjectColorProperties targetProp;
+	targetProp.color = meshColor;
+	targetProp.usecolor = ID_BASEOBJECT_USECOLOR_ALWAYS;
+	targetProp.xray = useXray;
+
+	ObjectColorProperties checkProp;
+	currentParent->GetColorProperties(&checkProp);
+	if (checkProp.color != targetProp.color || checkProp.usecolor != targetProp.usecolor || checkProp.xray != targetProp.xray)
+	{
+		currentParent->SetColorProperties(&targetProp);
+		currentParent->Message(MSG_UPDATE);
 	}
 }
 
@@ -187,7 +301,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 		// QuadDraw Retopo Display styling defaults
 		data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
 		data.SetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0)); // QuadDraw Cyan (0, 150, 255)
-		data.SetBool(SHRINKWRAP_MESH_XRAY, true);
+		data.SetFloat(SHRINKWRAP_FACE_OPACITY, 0.35); // 35% opacity (QuadDraw style)
 		data.SetBool(SHRINKWRAP_DRAW_WIREFRAME, true);
 		data.SetVector(SHRINKWRAP_WIRE_COLOR, Vector(0.0, 0.0, 0.0)); // Crisp black wireframe
 		data.SetFloat(SHRINKWRAP_WIRE_WIDTH, 1.5);
@@ -211,7 +325,7 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 		{
 			EnsureDeformedEditing(doc);
 		}
-		ApplyMeshDisplay(op);
+		SyncMeshDisplay(op);
 		EventAdd();
 	}
 	else if (type == MSG_DESCRIPTION_CHECKUPDATE)
@@ -220,13 +334,28 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 		{
 			EnsureDeformedEditing(doc);
 		}
-		ApplyMeshDisplay(op);
+		SyncMeshDisplay(op);
 		EventAdd();
 	}
 	else if (type == MSG_DESCRIPTION_POSTSETPARAMETER)
 	{
-		ApplyMeshDisplay(op);
+		SyncMeshDisplay(op);
 		EventAdd();
+	}
+	else if (type == MSG_DOCUMENTINFO)
+	{
+		DocumentInfoData* docInfo = static_cast<DocumentInfoData*>(data);
+		if (docInfo)
+		{
+			if (docInfo->type == MSG_DOCUMENTINFO_TYPE_SAVE_BEFORE)
+			{
+				SyncMeshDisplay(op, true); // Restore original properties before saving scene to file
+			}
+			else if (docInfo->type == MSG_DOCUMENTINFO_TYPE_SAVE_AFTER)
+			{
+				SyncMeshDisplay(op, false); // Re-apply retopo display styling after save
+			}
+		}
 	}
 	else if (type == MSG_DESCRIPTION_COMMAND)
 	{
@@ -273,18 +402,30 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 	if (!op || !doc)
 		return;
 
-	ApplyMeshDisplay(op);
+	SyncMeshDisplay(op);
 
 	const BaseContainer& data = op->GetDataInstanceRef();
 	const BaseObject* targetObj = data.GetObjectLink(SHRINKWRAP_TARGET_LINK, doc);
 	if (targetObj)
 	{
-		UInt64 tDirty = targetObj->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX);
-		if (tDirty != _cachedTargetObjDirty)
+		UInt64 hierDirty = 0;
+		Int32 objCount = 0;
+		Int32 polyCount = 0;
+		Int32 pointCount = 0;
+		RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
+
+		if (hierDirty != _checkDirtyHash || targetObj != _checkDirtyTargetRoot)
 		{
-			_cachedTargetObjDirty = tDirty;
+			_checkDirtyHash = hierDirty;
+			_checkDirtyTargetRoot = targetObj;
 			op->SetDirty(DIRTYFLAGS::DATA);
 		}
+	}
+	else if (_checkDirtyTargetRoot != nullptr)
+	{
+		_checkDirtyHash = 0;
+		_checkDirtyTargetRoot = nullptr;
+		op->SetDirty(DIRTYFLAGS::DATA);
 	}
 }
 
@@ -296,15 +437,17 @@ DRAWRESULT ShrinkWrapDeformer::Draw(BaseObject* op, DRAWPASS drawpass, BaseDraw*
 	if (drawpass != DRAWPASS::OBJECT)
 		return DRAWRESULT::OK;
 
-	if (!op->GetDeformMode())
+	// Only draw wireframe overlay when deformer is enabled and visible
+	if (!op->GetDeformMode() || op->GetEditorMode() == MODE_OFF)
 		return DRAWRESULT::OK;
 
 	const BaseContainer& data = op->GetDataInstanceRef();
-	if (!data.GetBool(SHRINKWRAP_DRAW_WIREFRAME, true))
+	Bool drawWireframe = data.GetBool(SHRINKWRAP_DRAW_WIREFRAME, true);
+	if (!drawWireframe)
 		return DRAWRESULT::OK;
 
 	BaseObject* parent = op->GetUp();
-	if (!parent)
+	if (!parent || parent->GetEditorMode() == MODE_OFF)
 		return DRAWRESULT::OK;
 
 	const PolygonObject* poly = nullptr;
@@ -323,15 +466,8 @@ DRAWRESULT ShrinkWrapDeformer::Draw(BaseObject* op, DRAWPASS drawpass, BaseDraw*
 		return DRAWRESULT::OK;
 
 	Matrix rMg = parent->GetMg();
-
-	Vector wireColor = data.GetVector(SHRINKWRAP_WIRE_COLOR, Vector(0.0, 0.0, 0.0));
-	Float lineWidth = data.GetFloat(SHRINKWRAP_WIRE_WIDTH, 1.5);
-	if (lineWidth < 1.0) lineWidth = 1.0;
-	if (lineWidth > 10.0) lineWidth = 10.0;
-
-	GeData oldLineWidth = bd->GetDrawParam(DRAW_PARAMETER_LINEWIDTH);
-	bd->SetDrawParam(DRAW_PARAMETER_LINEWIDTH, GeData(lineWidth));
-	bd->SetPen(wireColor);
+	// zoffset = 2 ensures wireframe lines are strictly in front of polygons with zero Z-fighting
+	bd->SetMatrix_Matrix(nullptr, Matrix(), 2);
 
 	auto drawThickLine = [&](const Vector& p1, const Vector& p2, Float width)
 	{
@@ -363,6 +499,16 @@ DRAWRESULT ShrinkWrapDeformer::Draw(BaseObject* op, DRAWPASS drawpass, BaseDraw*
 		}
 	};
 
+	Vector wireColor = data.GetVector(SHRINKWRAP_WIRE_COLOR, Vector(0.0, 0.0, 0.0));
+	Float lineWidth = data.GetFloat(SHRINKWRAP_WIRE_WIDTH, 1.5);
+	if (lineWidth < 1.0) lineWidth = 1.0;
+	if (lineWidth > 10.0) lineWidth = 10.0;
+
+	GeData oldLineWidth = bd->GetDrawParam(DRAW_PARAMETER_LINEWIDTH);
+	bd->SetDrawParam(DRAW_PARAMETER_LINEWIDTH, GeData(lineWidth));
+	bd->SetTransparency(0);
+	bd->SetPen(wireColor);
+
 	for (Int32 i = 0; i < polyCount; ++i)
 	{
 		const CPolygon& p = polys[i];
@@ -389,6 +535,7 @@ DRAWRESULT ShrinkWrapDeformer::Draw(BaseObject* op, DRAWPASS drawpass, BaseDraw*
 	}
 
 	bd->SetDrawParam(DRAW_PARAMETER_LINEWIDTH, oldLineWidth);
+	bd->SetTransparency(0);
 	return DRAWRESULT::OK;
 }
 
@@ -415,8 +562,6 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 	if (!op->IsInstanceOf(Opoint))
 		return true;
-
-	ApplyMeshDisplay(const_cast<BaseObject*>(mod));
 
 	const BaseContainer& data = mod->GetDataInstanceRef();
 	const BaseObject* targetObj = data.GetObjectLink(SHRINKWRAP_TARGET_LINK, doc);
@@ -448,28 +593,45 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	if (!padr || pcnt <= 0)
 		return true;
 
-	const PolygonObject* targetPoly = GetTargetPolygonObject(targetObj);
-	if (!targetPoly)
+	maxon::BaseArray<const PolygonObject*> targetPolys;
+	maxon::BaseArray<Matrix> targetMatrices;
+	CollectScenePolygons(targetObj, op, targetPolys, targetMatrices);
+
+	if (targetPolys.GetCount() == 0)
 		return true;
 
+	Int32 objCount = (Int32)targetPolys.GetCount();
+	Int32 totalPolys = 0;
+	Int32 totalPoints = 0;
+	UInt64 hierDirty = 0;
+	for (Int32 k = 0; k < objCount; ++k)
+	{
+		const PolygonObject* p = targetPolys[k];
+		hierDirty ^= (p->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		totalPolys += p->GetPolygonCount();
+		totalPoints += p->GetPointCount();
+	}
+	hierDirty ^= (targetObj->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+
 	// BVH Caching with dirty check
-	UInt64 curDirty = targetPoly->GetDirty(DIRTYFLAGS::DATA);
-	if (!_bvh.IsBuilt() || curDirty != _cachedTargetDirty || targetPoly != _cachedTargetPtr ||
-		targetPoly->GetPolygonCount() != _cachedTargetPolyCount ||
-		targetPoly->GetPointCount() != _cachedTargetPointCount)
+	if (!_bvh.IsBuilt() || hierDirty != _cachedHierarchyDirty || targetObj != _cachedTargetRoot ||
+		objCount != _cachedObjectCount || totalPolys != _cachedTotalPolyCount ||
+		totalPoints != _cachedTotalPointCount)
 	{
 		auto t0 = std::chrono::high_resolution_clock::now();
-		if (!_bvh.Build(targetPoly, thread))
+		Matrix invTargetMg = ~targetObj->GetMg();
+		if (!_bvh.Build(targetPolys, targetMatrices, invTargetMg, thread))
 			return true;
 		auto t1 = std::chrono::high_resolution_clock::now();
 		double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-		ApplicationOutput("ShrinkWrap: BVH built for @ polygons (@ triangles) in @ ms."_s,
-						  targetPoly->GetPolygonCount(), _bvh.GetTriangleCount(), ms);
+		ApplicationOutput("ShrinkWrap: BVH built for @ objects, @ polygons (@ triangles) in @ ms."_s,
+						  objCount, totalPolys, _bvh.GetTriangleCount(), ms);
 
-		_cachedTargetDirty = curDirty;
-		_cachedTargetPtr = targetPoly;
-		_cachedTargetPolyCount = targetPoly->GetPolygonCount();
-		_cachedTargetPointCount = targetPoly->GetPointCount();
+		_cachedHierarchyDirty = hierDirty;
+		_cachedTargetRoot = targetObj;
+		_cachedObjectCount = objCount;
+		_cachedTotalPolyCount = totalPolys;
+		_cachedTotalPointCount = totalPoints;
 	}
 
 	if (!_bvh.IsBuilt())
@@ -708,6 +870,21 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 				}
 			}
 		}
+	}
+
+	Bool customColor = data.GetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
+	if (customColor)
+	{
+		Vector meshColor = data.GetVector(SHRINKWRAP_MESH_COLOR, Vector(0.0, 150.0 / 255.0, 1.0));
+		Float faceOpacity = data.GetFloat(SHRINKWRAP_FACE_OPACITY, 0.35);
+		if (faceOpacity > 1.0) faceOpacity /= 100.0;
+		if (faceOpacity < 0.0) faceOpacity = 0.0;
+
+		ObjectColorProperties defProp;
+		defProp.color = meshColor;
+		defProp.usecolor = ID_BASEOBJECT_USECOLOR_ALWAYS;
+		defProp.xray = (faceOpacity < 0.99);
+		op->SetColorProperties(&defProp);
 	}
 
 	op->Message(MSG_UPDATE);

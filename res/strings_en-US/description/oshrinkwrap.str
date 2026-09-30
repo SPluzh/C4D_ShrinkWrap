@@ -22,7 +22,7 @@ STRINGTABLE Oshrinkwrap
 	SHRINKWRAP_GROUP_DISPLAY "Display Settings (QuadDraw Style)";
 	SHRINKWRAP_ENABLE_CUSTOM_COLOR "Enable QuadDraw Retopo Color";
 	SHRINKWRAP_MESH_COLOR "Mesh Color";
-	SHRINKWRAP_MESH_XRAY "X-Ray / Semi-Transparent";
+	SHRINKWRAP_FACE_OPACITY "Mesh Opacity";
 	SHRINKWRAP_DRAW_WIREFRAME "Draw Wireframe Overlay";
 	SHRINKWRAP_WIRE_COLOR "Wireframe Color";
 	SHRINKWRAP_WIRE_WIDTH "Wire Width";
