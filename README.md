@@ -36,6 +36,7 @@ Designed for both traditional surface projection and high-speed live retopology 
 ### Exclude Selection Tag
 - **Hard Component Locking**: Drag a **Point Selection Tag**, **Edge Selection Tag**, or **Polygon Selection Tag** (or an exclusion Vertex Map) to completely lock chosen parts from snapping.
 - **Retains Original Positions**: Excluded components are completely skipped during calculation and remain at their base un-deformed coordinates, even when **Live Auto-Bake** is enabled.
+- **Refresh / Update Exclusions Button**: Clears any deleted tags from the link and instantly forces a re-evaluation so previously locked points snap back to the target surface.
 
 ---
 

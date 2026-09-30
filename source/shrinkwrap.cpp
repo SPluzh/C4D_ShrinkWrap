@@ -24,9 +24,13 @@ static const BaseList2D* ResolveLink(const BaseContainer& data, Int32 id, const 
 		if (bl)
 		{
 			node = bl->GetLink(doc, 0);
-			if (!node)
-				node = bl->ForceGetLink();
 		}
+	}
+	if (node && node->IsInstanceOf(Tbase))
+	{
+		const BaseTag* tag = static_cast<const BaseTag*>(node);
+		if (!tag->GetObject() || (doc && tag->GetDocument() != doc))
+			return nullptr;
 	}
 	return node;
 }
@@ -476,26 +480,32 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 	else if (type == MSG_DESCRIPTION_CHECKUPDATE)
 	{
 		_cachedHierarchyDirty = 0;
+		_checkDirtyHash = 0;
 		if (doc)
 		{
 			EnsureDeformedEditing(doc);
 		}
 		SyncMeshDisplay(op);
+		op->SetDirty(DIRTYFLAGS::DATA);
 		BaseObject* parent = op->GetUp();
 		if (parent)
 		{
 			parent->SetDirty(DIRTYFLAGS::DATA);
+			parent->Message(MSG_UPDATE);
 		}
 		EventAdd();
 	}
 	else if (type == MSG_DESCRIPTION_POSTSETPARAMETER)
 	{
 		_cachedHierarchyDirty = 0;
+		_checkDirtyHash = 0;
 		SyncMeshDisplay(op);
+		op->SetDirty(DIRTYFLAGS::DATA);
 		BaseObject* parent = op->GetUp();
 		if (parent)
 		{
 			parent->SetDirty(DIRTYFLAGS::DATA);
+			parent->Message(MSG_UPDATE);
 		}
 		EventAdd();
 	}
@@ -556,6 +566,32 @@ Bool ShrinkWrapDeformer::Message(GeListNode* node, Int32 type, void* data)
 					}
 				}
 			}
+			else if (cmdId == SHRINKWRAP_REFRESH_EXCLUSIONS)
+			{
+				if (doc)
+				{
+					BaseContainer* bc = op->GetDataInstance();
+					if (bc)
+					{
+						const BaseList2D* linkTarget = ResolveLink(*bc, SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+						if (!linkTarget)
+						{
+							bc->SetLink(SHRINKWRAP_EXCLUDE_SELECTION_LINK, nullptr);
+						}
+					}
+
+					_cachedHierarchyDirty = 0;
+					_checkDirtyHash = 0;
+					op->SetDirty(DIRTYFLAGS::DATA);
+					BaseObject* parent = op->GetUp();
+					if (parent)
+					{
+						parent->SetDirty(DIRTYFLAGS::DATA);
+						parent->Message(MSG_UPDATE);
+					}
+					EventAdd();
+				}
+			}
 		}
 	}
 	return true;
@@ -583,11 +619,15 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 		}
 
 		const BaseList2D* selLink = ResolveLink(data, SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+		UInt64 selPtr = (UInt64)selLink;
+		hierDirty ^= (selPtr + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		if (selLink)
 		{
 			hierDirty ^= (selLink->GetDirty(DIRTYFLAGS::ALL) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		}
 		const BaseList2D* vmapLink = ResolveLink(data, SHRINKWRAP_VERTEXMAP_LINK, doc);
+		UInt64 vmapPtr = (UInt64)vmapLink;
+		hierDirty ^= (vmapPtr + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		if (vmapLink)
 		{
 			hierDirty ^= (vmapLink->GetDirty(DIRTYFLAGS::ALL) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));

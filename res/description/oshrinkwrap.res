@@ -65,6 +65,7 @@ CONTAINER Oshrinkwrap
 				5682;
 			}
 		}
+		BUTTON SHRINKWRAP_REFRESH_EXCLUSIONS { }
 
 		SEPARATOR { LINE; }
 
