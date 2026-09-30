@@ -9,6 +9,7 @@
 #include "c4d_basedraw.h"
 #include "description/dbasedraw.h"
 #include "description/obase.h"
+#include "description/ddoc.h"
 #include "maxon/parallelfor.h"
 #include <chrono>
 
@@ -93,6 +94,8 @@ static void RecurseSceneDirty(const BaseObject* op, UInt64& dirtySum, Int32& obj
 	objCount++;
 	dirtySum ^= (op->GetDirty(DIRTYFLAGS::DATA | DIRTYFLAGS::MATRIX) + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
 	HashMatrix(op->GetMg(), dirtySum);
+	dirtySum ^= ((UInt64)op->GetDeformMode() + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
+	dirtySum ^= ((UInt64)op->GetEditorMode() + 0x9e3779b97f4a7c15ULL + (dirtySum << 6) + (dirtySum >> 2));
 
 	if (op->IsInstanceOf(Opolygon))
 	{
@@ -203,18 +206,37 @@ static void CollectScenePolygons(const BaseObject* op,
 	}
 }
 
-static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj)
+static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj, Bool* outGeneratorDisabled = nullptr)
 {
+	if (outGeneratorDisabled)
+		*outGeneratorDisabled = false;
+
 	if (!targetObj)
 		return nullptr;
+
+	if (!targetObj->GetDeformMode() || targetObj->GetEditorMode() == MODE_OFF)
+	{
+		if (targetObj->IsInstanceOf(Osds) || targetObj->GetCache() || targetObj->GetDeformCache())
+		{
+			if (outGeneratorDisabled)
+				*outGeneratorDisabled = true;
+		}
+	}
 
 	const BaseObject* highestGenerator = nullptr;
 
 	for (const BaseObject* parent = targetObj->GetUp(); parent; parent = parent->GetUp())
 	{
-		// Stop if parent generator is disabled with green tick or editor mode OFF
+		// Check if parent generator is disabled with green tick or editor mode OFF
 		if (!parent->GetDeformMode() || parent->GetEditorMode() == MODE_OFF)
+		{
+			if (parent->IsInstanceOf(Osds) || parent->GetCache() || parent->GetDeformCache())
+			{
+				if (outGeneratorDisabled)
+					*outGeneratorDisabled = true;
+			}
 			break;
+		}
 
 		// Check if parent is a Subdivision Surface or another caching generator (Boole, Connect, Symmetry, etc.)
 		if (parent->IsInstanceOf(Osds) || parent->GetCache() || parent->GetDeformCache())
@@ -439,6 +461,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	BaseContainer& data = static_cast<BaseObject*>(node)->GetDataInstanceRef();
 	data.SetInt32(SHRINKWRAP_MODE, SHRINKWRAP_MODE_NEAREST_SURFACE);
 	data.SetBool(SHRINKWRAP_USE_SUBDIV, true);
+	data.SetBool(SHRINKWRAP_PAUSE_IF_GENERATORS_OFF, true);
 	data.SetFloat(SHRINKWRAP_OFFSET, 0.0);
 	data.SetFloat(SHRINKWRAP_STRENGTH, 1.0);
 	data.SetFloat(SHRINKWRAP_FALLOFF_RADIUS, 0.0);
@@ -607,7 +630,8 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 	if (targetObj)
 	{
 		Bool useSubdiv = data.GetBool(SHRINKWRAP_USE_SUBDIV, true);
-		const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj) : targetObj;
+		Bool targetGenDisabled = false;
+		const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj, &targetGenDisabled) : targetObj;
 		UInt64 hierDirty = 0;
 		Int32 objCount = 0;
 		Int32 polyCount = 0;
@@ -617,6 +641,12 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 		{
 			RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
 		}
+
+		Bool pauseIfGeneratorsOff = data.GetBool(SHRINKWRAP_PAUSE_IF_GENERATORS_OFF, true);
+		Bool sceneGeneratorsActive = doc->GetDataInstanceRef().GetBool(DOCUMENT_USEGENERATORS, true);
+		hierDirty ^= ((UInt64)sceneGeneratorsActive + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		hierDirty ^= ((UInt64)targetGenDisabled + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		hierDirty ^= ((UInt64)pauseIfGeneratorsOff + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 
 		const BaseList2D* selLink = ResolveLink(data, SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
 		UInt64 selPtr = (UInt64)selLink;
@@ -813,9 +843,24 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	}
 
 	Bool useSubdiv = data.GetBool(SHRINKWRAP_USE_SUBDIV, true);
-	const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj) : targetObj;
+	Bool pauseIfGeneratorsOff = data.GetBool(SHRINKWRAP_PAUSE_IF_GENERATORS_OFF, true);
+	Bool sceneGeneratorsActive = doc->GetDataInstanceRef().GetBool(DOCUMENT_USEGENERATORS, true);
+
+	Bool targetGenDisabled = false;
+	const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj, &targetGenDisabled) : targetObj;
 	if (!resolvedTarget || resolvedTarget == op || resolvedTarget == mod)
 		return true;
+
+	if (pauseIfGeneratorsOff)
+	{
+		// Skip deformation if global generators in the scene are turned off
+		if (!sceneGeneratorsActive)
+			return true;
+
+		// Skip deformation if target is under a generator that is disabled
+		if (useSubdiv && targetGenDisabled)
+			return true;
+	}
 
 	if (resolvedTarget != targetObj)
 	{
@@ -851,6 +896,9 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 	if (targetPolys.GetCount() == 0 && resolvedTarget != targetObj)
 	{
+		if (pauseIfGeneratorsOff)
+			return true;
+
 		resolvedTarget = targetObj;
 		CollectScenePolygons(resolvedTarget, op, targetPolys, targetMatrices);
 	}

@@ -4,6 +4,7 @@ STRINGTABLE Oshrinkwrap
 
 	SHRINKWRAP_TARGET_LINK "Target Object";
 	SHRINKWRAP_USE_SUBDIV "Snap to Subdiv Surface";
+	SHRINKWRAP_PAUSE_IF_GENERATORS_OFF "Pause if Generators are Off";
 	SHRINKWRAP_MODE "Mode";
 	SHRINKWRAP_MODE_NEAREST_SURFACE "Nearest Surface Point";
 	SHRINKWRAP_MODE_PROJECT "Project Along Vertex Normal";
