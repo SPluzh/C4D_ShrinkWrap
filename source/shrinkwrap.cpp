@@ -442,7 +442,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	data.SetBool(SHRINKWRAP_ABOVE_SURFACE, false);
 	data.SetBool(SHRINKWRAP_AUTO_BAKE, true);
 	data.SetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
-	data.SetBool(SHRINKWRAP_IGNORE_CAMERA, false);
+	data.SetBool(SHRINKWRAP_IGNORE_CAMERA, true);
 
 	// QuadDraw Retopo Display styling defaults
 	data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
@@ -874,7 +874,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	Bool bidirectional = data.GetBool(SHRINKWRAP_BIDIRECTIONAL);
 	Bool aboveSurface = data.GetBool(SHRINKWRAP_ABOVE_SURFACE);
 	Bool snapToVertsEdges = data.GetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
-	Bool ignoreCamera = data.GetBool(SHRINKWRAP_IGNORE_CAMERA, false);
+	Bool ignoreCamera = data.GetBool(SHRINKWRAP_IGNORE_CAMERA, true);
 
 	Matrix targetMg = resolvedTarget->GetMg();
 	Matrix invTargetMg = ~targetMg;
