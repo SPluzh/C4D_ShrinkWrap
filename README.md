@@ -21,7 +21,7 @@ Designed for both traditional surface projection and high-speed live retopology 
   - Project (along vertex normals, bidirectional)
   - Nearest Vertex
   - Target Normal
-- **Advanced Controls**: Offset, Strength, Falloff Radius, "Above Surface Only", "Snap to Vertices & Edges" (toggle between uniform surface sliding and vertex/edge attraction), and Vertex Map weight masking.
+- **Advanced Controls**: Offset, Strength, Falloff Radius, "Above Surface Only", "Snap to Vertices & Edges", Vertex Map weight masking, and **Exclude Selection Tag** (Point, Edge, or Polygon selection tags to lock components from deformation).
 - **Stability**: Fully undo-safe (Ctrl+Z), thread-safe evaluation, zero memory leaks.
 
 ---

@@ -54,6 +54,16 @@ CONTAINER Oshrinkwrap
 			}
 		}
 
+		LINK SHRINKWRAP_EXCLUDE_SELECTION_LINK
+		{
+			ACCEPT
+			{
+				5674;
+				5673;
+				5701;
+			}
+		}
+
 		SEPARATOR { LINE; }
 
 		BOOL SHRINKWRAP_AUTO_BAKE { }

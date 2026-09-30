@@ -17,6 +17,7 @@ STRINGTABLE Oshrinkwrap
 	SHRINKWRAP_BIDIRECTIONAL "Bidirectional Raycast";
 	SHRINKWRAP_ABOVE_SURFACE "Keep Above Surface";
 	SHRINKWRAP_VERTEXMAP_LINK "Vertex Map Restriction";
+	SHRINKWRAP_EXCLUDE_SELECTION_LINK "Exclude Selection Tag";
 	SHRINKWRAP_AUTO_BAKE "Auto-Bake to Base Mesh (Live Snap)";
 	SHRINKWRAP_ENABLE_DEFORMED_EDITING "Enable Deformed Editing";
 	SHRINKWRAP_APPLY_TO_MESH "Bake / Apply to Mesh";

@@ -565,6 +565,17 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 			RecurseSceneDirty(targetObj, hierDirty, objCount, polyCount, pointCount);
 		}
 
+		const BaseList2D* selLink = data.GetObjectLink(SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+		if (selLink)
+		{
+			hierDirty ^= (selLink->GetDirty(DIRTYFLAGS::DATA) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		}
+		const BaseList2D* vmapLink = data.GetObjectLink(SHRINKWRAP_VERTEXMAP_LINK, doc);
+		if (vmapLink)
+		{
+			hierDirty ^= (vmapLink->GetDirty(DIRTYFLAGS::DATA) + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
+		}
+
 		if (hierDirty != _checkDirtyHash || resolvedTarget != _checkDirtyTargetRoot)
 		{
 			_checkDirtyHash = hierDirty;
@@ -925,6 +936,103 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		}
 	}
 
+	// Exclude Selection Tag handling
+	const BaseList2D* selLink = data.GetObjectLink(SHRINKWRAP_EXCLUDE_SELECTION_LINK, doc);
+	maxon::BaseArray<Char> excludedPoints;
+	Bool hasExcludedPoints = false;
+
+	if (selLink)
+	{
+		const SelectionTag* selTag = static_cast<const SelectionTag*>(selLink);
+		const BaseSelect* bs = selTag ? selTag->GetBaseSelect() : nullptr;
+		if (bs && bs->GetCount() > 0)
+		{
+			if (excludedPoints.Resize(pcnt) != maxon::FAILED)
+			{
+				for (Int32 i = 0; i < pcnt; ++i)
+					excludedPoints[i] = 0;
+
+				if (selLink->IsInstanceOf(5674 /* Tpointselection */))
+				{
+					for (Int32 i = 0; i < pcnt; ++i)
+					{
+						if (bs->IsSelected(i))
+						{
+							excludedPoints[i] = 1;
+							hasExcludedPoints = true;
+						}
+					}
+				}
+				else if (selLink->IsInstanceOf(5673 /* Tpolygonselection */) && op->IsInstanceOf(Opolygon))
+				{
+					const PolygonObject* polyOp = static_cast<const PolygonObject*>(op);
+					Int32 polyCount = polyOp->GetPolygonCount();
+					const CPolygon* polys = polyOp->GetPolygonR();
+					if (polys)
+					{
+						for (Int32 pIdx = 0; pIdx < polyCount; ++pIdx)
+						{
+							if (bs->IsSelected(pIdx))
+							{
+								const CPolygon& poly = polys[pIdx];
+								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+								if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+								hasExcludedPoints = true;
+							}
+						}
+					}
+				}
+				else if (selLink->IsInstanceOf(5701 /* Tedgeselection */) && op->IsInstanceOf(Opolygon))
+				{
+					const PolygonObject* polyOp = static_cast<const PolygonObject*>(op);
+					Int32 polyCount = polyOp->GetPolygonCount();
+					const CPolygon* polys = polyOp->GetPolygonR();
+					if (polys)
+					{
+						for (Int32 pIdx = 0; pIdx < polyCount; ++pIdx)
+						{
+							const CPolygon& poly = polys[pIdx];
+							Int32 baseEdge = pIdx * 4;
+							if (bs->IsSelected(baseEdge + 0))
+							{
+								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+								hasExcludedPoints = true;
+							}
+							if (bs->IsSelected(baseEdge + 1))
+							{
+								if (poly.b >= 0 && poly.b < pcnt) excludedPoints[poly.b] = 1;
+								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+								hasExcludedPoints = true;
+							}
+							if (bs->IsSelected(baseEdge + 2))
+							{
+								if (poly.c >= 0 && poly.c < pcnt) excludedPoints[poly.c] = 1;
+								if (poly.c == poly.d)
+								{
+									if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+								}
+								else
+								{
+									if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+								}
+								hasExcludedPoints = true;
+							}
+							if (poly.c != poly.d && bs->IsSelected(baseEdge + 3))
+							{
+								if (poly.d >= 0 && poly.d < pcnt) excludedPoints[poly.d] = 1;
+								if (poly.a >= 0 && poly.a < pcnt) excludedPoints[poly.a] = 1;
+								hasExcludedPoints = true;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Project vertices in parallel across all CPU cores
 	maxon::AtomicBool breakRequested(false);
 
@@ -938,6 +1046,9 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 			breakRequested.StoreRelaxed(true);
 			return;
 		}
+
+		if (hasExcludedPoints && excludedPoints[i] != 0)
+			return;
 
 		Float s = strength;
 		if (vmapWeights)
