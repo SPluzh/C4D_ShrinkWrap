@@ -425,6 +425,7 @@ Bool ShrinkWrapDeformer::Init(GeListNode* node, Bool isCloneInit)
 	data.SetBool(SHRINKWRAP_BIDIRECTIONAL, true);
 	data.SetBool(SHRINKWRAP_ABOVE_SURFACE, false);
 	data.SetBool(SHRINKWRAP_AUTO_BAKE, true);
+	data.SetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
 
 	// QuadDraw Retopo Display styling defaults
 	data.SetBool(SHRINKWRAP_ENABLE_CUSTOM_COLOR, true);
@@ -844,10 +845,33 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 	Float falloffRadius = data.GetFloat(SHRINKWRAP_FALLOFF_RADIUS);
 	Bool bidirectional = data.GetBool(SHRINKWRAP_BIDIRECTIONAL);
 	Bool aboveSurface = data.GetBool(SHRINKWRAP_ABOVE_SURFACE);
+	Bool snapToVertsEdges = data.GetBool(SHRINKWRAP_SNAP_VERTICES_EDGES, false);
 
 	Matrix targetMg = resolvedTarget->GetMg();
 	Matrix invTargetMg = ~targetMg;
 	Matrix invOpMg = ~op_mg;
+
+	// Extract active viewport camera for uniform surface projection
+	BaseDraw* bd = doc ? doc->GetActiveBaseDraw() : nullptr;
+	Vector camPos(0.0);
+	Vector camForward(0.0, 0.0, 1.0);
+	Bool isPerspective = true;
+	Bool hasCamera = false;
+
+	if (bd)
+	{
+		Matrix camMg = bd->GetMg();
+		camPos = camMg.off;
+		camForward = camMg.sqmat.v3;
+		if (camForward.GetSquaredLength() > 1e-12)
+			camForward.Normalize();
+		else
+			camForward = Vector(0.0, 0.0, 1.0);
+
+		// In Cinema 4D, Pperspective == 0. All other projections are parallel/orthographic.
+		isPerspective = (bd->GetProjection() == 0);
+		hasCamera = true;
+	}
 
 	// Vertex Map handling
 	const BaseList2D* vmapLink = data.GetObjectLink(SHRINKWRAP_VERTEXMAP_LINK, doc);
@@ -928,12 +952,49 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 		Vector pWorld = op_mg * pLocal;
 		Vector pTargetLocal = invTargetMg * pWorld;
 
+		auto querySurfacePoint = [&](Vector& outHitTargetLocal, Vector& outNormTargetLocal) -> Bool
+		{
+			if (!snapToVertsEdges && hasCamera)
+			{
+				Vector rayDirWorld = isPerspective ? (pWorld - camPos) : camForward;
+				if (rayDirWorld.GetSquaredLength() > 1e-12)
+					rayDirWorld.Normalize();
+				else
+					rayDirWorld = camForward;
+
+				Vector rayDirTargetLocal = invTargetMg.sqmat * rayDirWorld;
+
+				Vector closestHit, closestNorm;
+				Float maxRayDist = (falloffRadius > 0.0) ? falloffRadius : MAXRANGE;
+
+				if (_bvh.FindClosestPoint(pTargetLocal, closestHit, closestNorm, maxRayDist))
+				{
+					Float closestDist = (pTargetLocal - closestHit).GetLength();
+					Float allowedRayDist = maxon::Min(closestDist * 3.0 + 10.0, maxRayDist);
+
+					Vector rayHit, rayNorm;
+					if (_bvh.Raycast(pTargetLocal, rayDirTargetLocal, rayHit, rayNorm, allowedRayDist, true))
+					{
+						outHitTargetLocal = rayHit;
+						outNormTargetLocal = closestNorm;
+						return true;
+					}
+
+					outHitTargetLocal = closestHit;
+					outNormTargetLocal = closestNorm;
+					return true;
+				}
+				return false;
+			}
+			return _bvh.FindClosestPoint(pTargetLocal, outHitTargetLocal, outNormTargetLocal);
+		};
+
 		switch (mode)
 		{
 			case SHRINKWRAP_MODE_NEAREST_SURFACE:
 			{
 				Vector hitTargetLocal, normTargetLocal;
-				if (_bvh.FindClosestPoint(pTargetLocal, hitTargetLocal, normTargetLocal))
+				if (querySurfacePoint(hitTargetLocal, normTargetLocal))
 				{
 					Vector hitWorld = targetMg * hitTargetLocal;
 					Vector normWorld = targetMg.sqmat * normTargetLocal;
@@ -1022,7 +1083,7 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 			case SHRINKWRAP_MODE_TARGET_NORMAL:
 			{
 				Vector hitTargetLocal, normTargetLocal;
-				if (_bvh.FindClosestPoint(pTargetLocal, hitTargetLocal, normTargetLocal))
+				if (querySurfacePoint(hitTargetLocal, normTargetLocal))
 				{
 					Vector hitWorld = targetMg * hitTargetLocal;
 					Vector normWorld = targetMg.sqmat * normTargetLocal;

@@ -9,6 +9,7 @@ STRINGTABLE Oshrinkwrap
 	SHRINKWRAP_MODE_PROJECT "Project Along Vertex Normal";
 	SHRINKWRAP_MODE_NEAREST_VERTEX "Nearest Vertex";
 	SHRINKWRAP_MODE_TARGET_NORMAL "Target Surface Normal";
+	SHRINKWRAP_SNAP_VERTICES_EDGES "Snap to Vertices & Edges";
 
 	SHRINKWRAP_OFFSET "Offset";
 	SHRINKWRAP_STRENGTH "Strength";
