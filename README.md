@@ -42,7 +42,7 @@ Designed for both traditional surface projection and high-speed live retopology 
 
 ## Installation
 
-1. Download the latest release from the Releases section.
+1. Download the latest release from the [Releases](https://github.com/SPluzh/C4D_ShrinkWrap/releases) section.
 2. Unpack the `C4D_ShrinkWrap` folder into your Cinema 4D plugins directory:
    - **Windows**: `C:\Users\<User>\AppData\Roaming\Maxon\Maxon Cinema 4D <Version>\plugins\`
 3. Restart Cinema 4D.
