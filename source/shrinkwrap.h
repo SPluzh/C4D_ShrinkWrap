@@ -43,6 +43,7 @@ private:
 	mutable maxon::Int32 _cachedObjectCount = 0;
 	mutable maxon::Int32 _cachedTotalPolyCount = 0;
 	mutable maxon::Int32 _cachedTotalPointCount = 0;
+	mutable maxon::Bool _cachedSceneGeneratorsActive = true;
 
 	// Parent mesh display restoration tracking
 	mutable maxon::Bool _meshDisplayApplied = false;

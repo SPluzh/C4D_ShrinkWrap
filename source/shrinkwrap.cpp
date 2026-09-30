@@ -206,6 +206,30 @@ static void CollectScenePolygons(const BaseObject* op,
 	}
 }
 
+static Bool AreSceneGeneratorsActive(const BaseDocument* doc)
+{
+	if (!doc)
+		return true;
+
+	// 1. Check UI Command state for "Use Generators" (Command ID 13523) when in main thread
+	if (GeIsMainThreadAndNoDrawThread())
+	{
+		if (!IsCommandChecked(13523))
+			return false;
+	}
+
+	// 2. Check Document Settings (DOCUMENTSETTINGS::GENERAL -> DOCUMENT_USEGENERATORS)
+	const BaseContainer* bc = doc->GetSettingsInstance((Int32)DOCUMENTSETTINGS::GENERAL);
+	if (bc && !bc->GetBool(DOCUMENT_USEGENERATORS, true))
+		return false;
+
+	BaseContainer general = doc->GetData(DOCUMENTSETTINGS::GENERAL);
+	if (!general.GetBool(DOCUMENT_USEGENERATORS, true))
+		return false;
+
+	return true;
+}
+
 static const BaseObject* ResolveGeneratorTarget(const BaseObject* targetObj, Bool* outGeneratorDisabled = nullptr)
 {
 	if (outGeneratorDisabled)
@@ -643,7 +667,8 @@ void ShrinkWrapDeformer::CheckDirty(BaseObject* op, const BaseDocument* doc)
 		}
 
 		Bool pauseIfGeneratorsOff = data.GetBool(SHRINKWRAP_PAUSE_IF_GENERATORS_OFF, true);
-		Bool sceneGeneratorsActive = doc->GetDataInstanceRef().GetBool(DOCUMENT_USEGENERATORS, true);
+		Bool sceneGeneratorsActive = AreSceneGeneratorsActive(doc);
+		_cachedSceneGeneratorsActive = sceneGeneratorsActive;
 		hierDirty ^= ((UInt64)sceneGeneratorsActive + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		hierDirty ^= ((UInt64)targetGenDisabled + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
 		hierDirty ^= ((UInt64)pauseIfGeneratorsOff + 0x9e3779b97f4a7c15ULL + (hierDirty << 6) + (hierDirty >> 2));
@@ -844,7 +869,9 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 	Bool useSubdiv = data.GetBool(SHRINKWRAP_USE_SUBDIV, true);
 	Bool pauseIfGeneratorsOff = data.GetBool(SHRINKWRAP_PAUSE_IF_GENERATORS_OFF, true);
-	Bool sceneGeneratorsActive = doc->GetDataInstanceRef().GetBool(DOCUMENT_USEGENERATORS, true);
+	Bool sceneGeneratorsActive = _cachedSceneGeneratorsActive;
+	if (!AreSceneGeneratorsActive(doc))
+		sceneGeneratorsActive = false;
 
 	Bool targetGenDisabled = false;
 	const BaseObject* resolvedTarget = useSubdiv ? ResolveGeneratorTarget(targetObj, &targetGenDisabled) : targetObj;
@@ -853,13 +880,20 @@ Bool ShrinkWrapDeformer::ModifyObject(const BaseObject* mod, const BaseDocument*
 
 	if (pauseIfGeneratorsOff)
 	{
-		// Skip deformation if global generators in the scene are turned off
+		// 1. Skip deformation if global scene generators are disabled (CallCommand 13523 / Use Generators)
 		if (!sceneGeneratorsActive)
 			return true;
 
-		// Skip deformation if target is under a generator that is disabled
+		// 2. Skip deformation if target is under a generator that is disabled
 		if (useSubdiv && targetGenDisabled)
 			return true;
+
+		// 3. Skip deformation if target is an SDS (or caching generator) that currently has no cache
+		if (useSubdiv && resolvedTarget && (resolvedTarget->IsInstanceOf(Osds) || resolvedTarget != targetObj) &&
+			!resolvedTarget->GetCache() && !resolvedTarget->GetDeformCache())
+		{
+			return true;
+		}
 	}
 
 	if (resolvedTarget != targetObj)
