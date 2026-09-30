@@ -26,6 +26,19 @@ Designed for both traditional surface projection and high-speed live retopology 
 
 ---
 
+## Masking & Restriction Controls
+
+### Vertex Map Restriction
+- **Smooth Influence Control**: Drag a **Vertex Map Tag** into this field to modulate the projection strength per vertex with smooth floating-point weights (0.0 to 1.0).
+- **Field System Integration**: Fully compatible with Cinema 4D Fields (Box, Spherical, Random, Decay, Spline Fields) driving the Vertex Map for dynamic, procedural falloff.
+- **Soft Transitions**: Ideal for smoothly blending between deformed and non-deformed areas of your mesh.
+
+### Exclude Selection Tag
+- **Hard Component Locking**: Drag a **Point Selection Tag**, **Edge Selection Tag**, or **Polygon Selection Tag** (or an exclusion Vertex Map) to completely lock chosen parts from snapping.
+- **Retains Original Positions**: Excluded components are completely skipped during calculation and remain at their base un-deformed coordinates, even when **Live Auto-Bake** is enabled.
+
+---
+
 ## Installation
 
 1. Download the latest release from the Releases section.
