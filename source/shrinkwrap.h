@@ -6,7 +6,7 @@
 #include "shrinkwrap_bvh.h"
 #include "oshrinkwrap.h"
 
-#define PLUGIN_ID_SHRINKWRAP 1068200
+#define PLUGIN_ID_SHRINKWRAP 1070821
 
 class ShrinkWrapDeformer : public cinema::ObjectData
 {
