@@ -1,5 +1,5 @@
 @echo off
-set "SOURCE=C:\Users\user\Desktop\cpp\C4D_DollyZoom\sdk_2026\build\bin\Release\plugins\C4D_ShrinkWrap"
+set "SOURCE=C:\Users\user\Desktop\cpp\C4D_SDK\sdk_2026\build\bin\Release\plugins\C4D_ShrinkWrap"
 set "DEST=\\vmware-host\Shared Folders\plugins\C4D_ShrinkWrap"
 
 echo.

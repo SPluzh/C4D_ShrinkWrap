@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $cmake = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-$sdkPath = "C:\Users\user\Desktop\cpp\C4D_DollyZoom\sdk_2025"
+$sdkPath = "C:\Users\user\Desktop\cpp\C4D_SDK\sdk_2025"
 
 Write-Host "Running CMake configure for C4D_ShrinkWrap (2025)..."
 & $cmake -B "$sdkPath/build" -S "$sdkPath" -G "Visual Studio 17 2022" -A x64 -DCMAKE_GENERATOR_INSTANCE="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools,version=17.14.36915.13"
